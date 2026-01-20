@@ -20,7 +20,7 @@ pub struct DapServer {
     initialized: bool,
 
     /// Whether to print debug messages
-    debug: bool,
+    print_dap_message: bool,
 }
 
 /// Transport mode for the DAP server
@@ -38,12 +38,12 @@ impl DapServer {
     }
 
     /// Creates a new DAP server with debug flag
-    pub fn with_debug(session: Arc<Mutex<DebugSession>>, debug: bool) -> Self {
+    pub fn with_debug(session: Arc<Mutex<DebugSession>>, print_dap_message: bool) -> Self {
         Self {
             session,
             seq: 1,
             initialized: false,
-            debug,
+            print_dap_message,
         }
     }
 
@@ -63,12 +63,10 @@ impl DapServer {
     pub fn run_with_transport(&mut self, mode: TransportMode) -> io::Result<()> {
         match mode {
             TransportMode::Stdio => self.run_stdio(),
-            TransportMode::Http(port) => {
-                Err(io::Error::new(
-                    io::ErrorKind::Unsupported,
-                    "HTTP transport not implemented in boa_engine. Use boa_cli for HTTP support."
-                ))
-            }
+            TransportMode::Http(port) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "HTTP transport not implemented in boa_engine. Use boa_cli for HTTP support.",
+            )),
         }
     }
 
@@ -124,8 +122,12 @@ impl DapServer {
         let command = request.command.clone();
         let request_seq = request.seq;
 
-        if self.debug {
-            eprintln!("[DAP-DEBUG] Received request: {}", serde_json::to_string(&request).unwrap_or_else(|_| format!("{{\"command\":\"{}\"}}", command)));
+        if self.print_dap_message {
+            eprintln!(
+                "[BOA-DAP-DEBUG] Received request: {}",
+                serde_json::to_string(&request)
+                    .unwrap_or_else(|_| format!("{{\"command\":\"{}\"}}", command))
+            );
         }
 
         let result = match command.as_str() {
