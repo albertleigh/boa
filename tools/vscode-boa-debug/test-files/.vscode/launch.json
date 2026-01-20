@@ -5,13 +5,17 @@
       "type": "boa",
       "request": "launch",
       "name": "Debug Current File",
-      "program": "${file}"
+      "program": "${file}",
+      "useHttp": true,
+      "httpPort": 4711
     },
     {
       "type": "boa",
       "request": "launch",
       "name": "Test Boa Debugger",
-      "program": "${workspaceFolder}/basic.js"
+      "program": "${workspaceFolder}/basic.js",
+      "useHttp": true,
+      "httpPort": 4711
     },
     {
       "name": "Test Factorial",

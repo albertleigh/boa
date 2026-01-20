@@ -54,13 +54,148 @@ function deactivate() {
  */
 class BoaDebugAdapterDescriptorFactory {
     /**
+     * Check if a port is available
+     * @param {number} port - The port to check
+     * @returns {Promise<boolean>} - True if port is available, false if in use
+     */
+    async isPortAvailable(port) {
+        const net = require('net');
+        
+        return new Promise((resolve) => {
+            const tester = net.createServer()
+                .once('error', (err) => {
+                    if (err.code === 'EADDRINUSE') {
+                        resolve(false); // Port is in use
+                    } else {
+                        resolve(true); // Other error, assume available
+                    }
+                })
+                .once('listening', () => {
+                    tester.close(() => {
+                        resolve(true); // Port is available
+                    });
+                })
+                .listen(port, '127.0.0.1');
+        });
+    }
+
+    /**
+     * Wait for server to be ready by polling the port
+     * @param {number} port - The port to check
+     * @param {number} timeout - Timeout in milliseconds
+     * @returns {Promise<void>}
+     */
+    async waitForServerReady(port, timeout = 10000) {
+        const net = require('net');
+        const startTime = Date.now();
+        const pollInterval = 100; // Check every 100ms
+
+        while (Date.now() - startTime < timeout) {
+            // Try to connect to the port
+            const isListening = await new Promise((resolve) => {
+                const socket = new net.Socket();
+                
+                socket.setTimeout(pollInterval);
+                
+                socket.on('connect', () => {
+                    socket.destroy();
+                    resolve(true);
+                });
+                
+                socket.on('timeout', () => {
+                    socket.destroy();
+                    resolve(false);
+                });
+                
+                socket.on('error', () => {
+                    socket.destroy();
+                    resolve(false);
+                });
+                
+                socket.connect(port, '127.0.0.1');
+            });
+
+            if (isListening) {
+                return; // Server is ready
+            }
+
+            // Wait before next poll
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+
+        throw new Error(`Server did not start on port ${port} within ${timeout}ms`);
+    }
+
+    /**
      * @param {vscode.DebugSession} session
      * @returns {vscode.ProviderResult<vscode.DebugAdapterDescriptor>}
      */
-    createDebugAdapterDescriptor(session) {
+    async createDebugAdapterDescriptor(session) {
         console.log(`[Boa Debug] Creating debug adapter for session: ${session.name}`);
         console.log(`[Boa Debug] Configuration:`, session.configuration);
 
+        // Check if HTTP mode is requested
+        const useHttp = session.configuration.useHttp || false;
+        const httpPort = session.configuration.httpPort || 4711;
+
+        if (useHttp) {
+            console.log(`[Boa Debug] Using HTTP mode on port ${httpPort}`);
+            
+            // Check if port is available
+            const portAvailable = await this.isPortAvailable(httpPort);
+            if (!portAvailable) {
+                // Port is already in use - assume server is already running
+                console.log(`[Boa Debug] Port ${httpPort} is already in use, connecting to existing server`);
+            } else {
+                console.log(`[Boa Debug] Port ${httpPort} is available, starting new server`);
+
+                // Start the boa-cli server in HTTP mode
+                const boaCliPath = this.findBoaCli();
+
+                if (!boaCliPath) {
+                    const errorMsg = 'boa-cli not found. Please ensure it is built in target/debug or target/release.';
+                    console.error(`[Boa Debug] ${errorMsg}`);
+                    vscode.window.showErrorMessage(errorMsg);
+                    return null;
+                }
+
+                // Launch boa-cli with --dap and --dap-http-port flags
+                const serverProcess = spawn(boaCliPath, ['--dap', '--dap-http-port', httpPort.toString()], {
+                    cwd: session.workspaceFolder?.uri.fsPath || process.cwd(),
+                    env: {
+                        ...process.env,
+                        BOA_DAP_DEBUG: '1'
+                    }
+                });
+
+                serverProcess.stdout.on('data', (data) => {
+                    console.log(`[Boa Server] ${data.toString()}`);
+                });
+
+                serverProcess.stderr.on('data', (data) => {
+                    console.log(`[Boa Server] ${data.toString()}`);
+                });
+
+                serverProcess.on('error', (err) => {
+                    console.error(`[Boa Server] Failed to start: ${err.message}`);
+                    vscode.window.showErrorMessage(`Failed to start Boa debug server: ${err.message}`);
+                });
+
+                // Wait for the server to actually start listening
+                console.log(`[Boa Debug] Waiting for server to be ready on port ${httpPort}...`);
+                await this.waitForServerReady(httpPort, 10000); // Wait up to 10 seconds
+                console.log(`[Boa Debug] Server is ready!`);
+            }
+            
+            // Return a server descriptor pointing to localhost:httpPort
+            const descriptor = new vscode.DebugAdapterServer(httpPort, '127.0.0.1');
+            console.log(`[Boa Debug] HTTP debug adapter descriptor created for port ${httpPort}`);
+            return descriptor;
+        }
+
+        // Default: stdio mode
+        console.log(`[Boa Debug] Using stdio mode`);
+        
         // Path to the boa-cli executable
         const boaCliPath = this.findBoaCli();
 

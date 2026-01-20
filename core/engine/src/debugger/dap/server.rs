@@ -18,15 +18,32 @@ pub struct DapServer {
 
     /// Whether the server has been initialized
     initialized: bool,
+
+    /// Whether to print debug messages
+    debug: bool,
+}
+
+/// Transport mode for the DAP server
+pub enum TransportMode {
+    /// Standard input/output (default)
+    Stdio,
+    /// HTTP server on specified port
+    Http(u16),
 }
 
 impl DapServer {
     /// Creates a new DAP server
     pub fn new(session: Arc<Mutex<DebugSession>>) -> Self {
+        Self::with_debug(session, false)
+    }
+
+    /// Creates a new DAP server with debug flag
+    pub fn with_debug(session: Arc<Mutex<DebugSession>>, debug: bool) -> Self {
         Self {
             session,
             seq: 1,
             initialized: false,
+            debug,
         }
     }
 
@@ -39,6 +56,24 @@ impl DapServer {
 
     /// Runs the DAP server on stdin/stdout
     pub fn run(&mut self) -> io::Result<()> {
+        self.run_with_transport(TransportMode::Stdio)
+    }
+
+    /// Runs the DAP server with specified transport mode
+    pub fn run_with_transport(&mut self, mode: TransportMode) -> io::Result<()> {
+        match mode {
+            TransportMode::Stdio => self.run_stdio(),
+            TransportMode::Http(port) => {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "HTTP transport not implemented in boa_engine. Use boa_cli for HTTP support."
+                ))
+            }
+        }
+    }
+
+    /// Runs the DAP server on stdin/stdout
+    fn run_stdio(&mut self) -> io::Result<()> {
         let stdin = io::stdin();
         let mut reader = BufReader::new(stdin.lock());
         let mut stdout = io::stdout();
@@ -85,9 +120,13 @@ impl DapServer {
     }
 
     /// Handles a DAP request and returns responses/events
-    fn handle_request(&mut self, request: Request) -> Vec<ProtocolMessage> {
+    pub fn handle_request(&mut self, request: Request) -> Vec<ProtocolMessage> {
         let command = request.command.clone();
         let request_seq = request.seq;
+
+        if self.debug {
+            eprintln!("[DAP-DEBUG] Received request: {}", serde_json::to_string(&request).unwrap_or_else(|_| format!("{{\"command\":\"{}\"}}", command)));
+        }
 
         let result = match command.as_str() {
             "initialize" => self.handle_initialize(request),

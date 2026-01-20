@@ -171,6 +171,11 @@ struct Opt {
     /// Run in DAP (Debug Adapter Protocol) mode for IDE debugging support.
     #[arg(long)]
     dap: bool,
+
+    /// Run DAP server in HTTP mode on specified port (default: 4711).
+    /// Use with --dap flag. If not specified, uses stdio mode.
+    #[arg(long, requires = "dap")]
+    dap_http_port: Option<u16>,
 }
 
 impl Opt {
@@ -418,7 +423,13 @@ fn main() -> Result<()> {
 
     // If in DAP mode, run the DAP server
     if args.dap {
-        return debug::dap::run_dap_server().map_err(|e| eyre!(e.to_string()));
+        let mode = if let Some(port) = args.dap_http_port {
+            debug::dap::DapTransportMode::Http(port)
+        } else {
+            // Default to port 4711 for HTTP if no specific mode chosen, otherwise stdio
+            debug::dap::DapTransportMode::Stdio
+        };
+        return debug::dap::run_dap_server_with_mode(mode).map_err(|e| eyre!(e.to_string()));
     }
 
     // A channel of expressions to run.
