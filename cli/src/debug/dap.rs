@@ -25,8 +25,8 @@ use std::fs;
 pub enum DapTransportMode {
     /// Standard input/output (default)
     Stdio,
-    /// HTTP server on specified port
-    Http(u16),
+    /// TCP server on specified port
+    Tcp(u16),
 }
 
 /// Runs the DAP server with specified transport mode
@@ -40,7 +40,7 @@ pub enum DapTransportMode {
 pub fn run_dap_server_with_mode(mode: DapTransportMode) -> JsResult<()> {
     let mode_str = match &mode {
         DapTransportMode::Stdio => "stdio".to_string(),
-        DapTransportMode::Http(port) => format!("TCP on port {}", port),
+        DapTransportMode::Tcp(port) => format!("TCP on port {}", port),
     };
 
     eprintln!("[DAP] Starting Boa Debug Adapter ({})", mode_str);
@@ -68,10 +68,10 @@ pub fn run_dap_server_with_mode(mode: DapTransportMode) -> JsResult<()> {
                 .run()
                 .map_err(|e| js_error!("DAP server error: {}", e))?;
         }
-        DapTransportMode::Http(port) => {
-            // Run HTTP server
-            run_http_server(session, port, debug)
-                .map_err(|e| js_error!("HTTP server error: {}", e))?;
+        DapTransportMode::Tcp(port) => {
+            // Run TCP server
+            run_tcp_server(session, port, debug)
+                .map_err(|e| js_error!("TCP server error: {}", e))?;
         }
     }
 
@@ -85,26 +85,26 @@ pub fn run_dap_server() -> JsResult<()> {
 }
 
 /// Runs the DAP server as a TCP server (raw socket, not HTTP)
-fn run_http_server(session: Arc<Mutex<DebugSession>>, port: u16, debug: bool) -> io::Result<()> {
+fn run_tcp_server(session: Arc<Mutex<DebugSession>>, port: u16, debug: bool) -> io::Result<()> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{TcpListener, TcpStream};
 
     let addr = format!("127.0.0.1:{}", port);
-    eprintln!("[DAP-TCP] Starting TCP server on {}", addr);
+    eprintln!("[BOA-DAP] Starting TCP server on {}", addr);
 
     let listener = TcpListener::bind(&addr)?;
-    eprintln!("[DAP-TCP] Server listening on {}", addr);
-    eprintln!("[DAP-TCP] Ready to accept connections");
+    eprintln!("[BOA-DAP] Server listening on {}", addr);
+    eprintln!("[BOA-DAP] Ready to accept connections");
 
     // Accept connections in a loop
     loop {
         match listener.accept() {
             Ok((stream, peer_addr)) => {
-                eprintln!("[DAP-TCP] Client connected from {}", peer_addr);
+                eprintln!("[BOA-DAP] Client connected from {}", peer_addr);
                 
                 // Handle this client connection
                 if let Err(e) = handle_tcp_client(stream, session.clone(), debug) {
-                    eprintln!("[DAP-TCP] Client handler error: {}", e);
+                    eprintln!("[BOA-DAP] Client handler error: {}", e);
                     // Continue accepting new connections even if one fails
                     continue;
                 }
@@ -114,7 +114,7 @@ fn run_http_server(session: Arc<Mutex<DebugSession>>, port: u16, debug: bool) ->
                 break;
             }
             Err(e) => {
-                eprintln!("[DAP-TCP] Error accepting connection: {}", e);
+                eprintln!("[BOA-DAP] Error accepting connection: {}", e);
                 return Err(e);
             }
         }
@@ -208,7 +208,7 @@ fn send_message_internal<W: Write>(message: &ProtocolMessage, writer: &mut W, de
     let json = serde_json::to_string(message).unwrap_or_else(|_| "{}".to_string());
     
     if debug {
-        eprintln!("[DAP-TCP] Output Event: {}", json);
+        eprintln!("[BOA-DAP] Output Event: {}", json);
     }
 
     write!(writer, "Content-Length: {}\r\n\r\n{}", json.len(), json)?;
@@ -241,12 +241,12 @@ fn handle_tcp_client(
         let mut header = String::new();
         match reader.read_line(&mut header) {
             Ok(0) => {
-                eprintln!("[DAP-TCP] Client disconnected");
+                eprintln!("[BOA-DAP] Client disconnected");
                 break;
             }
             Ok(_) => {}
             Err(e) => {
-                eprintln!("[DAP-TCP] Error reading header: {}", e);
+                eprintln!("[BOA-DAP] Error reading header: {}", e);
                 break;
             }
         }
@@ -262,7 +262,7 @@ fn handle_tcp_client(
         {
             Some(len) => len,
             None => {
-                eprintln!("[DAP-TCP] Invalid Content-Length header: {}", header);
+                eprintln!("[BOA-DAP] Invalid Content-Length header: {}", header);
                 continue;
             }
         };
@@ -277,7 +277,7 @@ fn handle_tcp_client(
 
         if debug {
             if let Ok(body_str) = String::from_utf8(buffer.clone()) {
-                eprintln!("[DAP-TCP] Request: {}", body_str);
+                eprintln!("[BOA-DAP] Request: {}", body_str);
             }
         }
 
@@ -312,10 +312,10 @@ fn handle_tcp_client(
                 }
             }
             Err(e) => {
-                eprintln!("[DAP-TCP] Failed to parse request: {}", e);
+                eprintln!("[BOA-DAP] Failed to parse request: {}", e);
             }
             _ => {
-                eprintln!("[DAP-TCP] Unexpected message type (not a request)");
+                eprintln!("[BOA-DAP] Unexpected message type (not a request)");
             }
         }
     }
@@ -328,7 +328,7 @@ fn send_dap_message<W: io::Write>(message: &ProtocolMessage, writer: &mut W, deb
     let json = serde_json::to_string(message).unwrap_or_else(|_| "{}".to_string());
     
     if debug {
-        eprintln!("[DAP-TCP] Response: {}", json);
+        eprintln!("[BOA-DAP] Response: {}", json);
     }
 
     // Write with Content-Length header

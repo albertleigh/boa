@@ -424,7 +424,7 @@ fn main() -> Result<()> {
     // If in DAP mode, run the DAP server
     if args.dap {
         let mode = if let Some(port) = args.dap_http_port {
-            debug::dap::DapTransportMode::Http(port)
+            debug::dap::DapTransportMode::Tcp(port)
         } else {
             // Default to port 4711 for HTTP if no specific mode chosen, otherwise stdio
             debug::dap::DapTransportMode::Stdio
