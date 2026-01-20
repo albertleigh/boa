@@ -26,12 +26,8 @@ use std::time::Duration;
 /// This combines the Debugger state with a condition variable that allows
 /// the waiting thread to be notified immediately when resume() is called,
 /// instead of polling every 10ms.
-struct DebuggerState {
-    debugger: Debugger,
-}
-
 struct DebuggerWithSignal {
-    state: Arc<Mutex<DebuggerState>>,
+    debugger: Arc<Mutex<Debugger>>,
     /// Condition variable for efficient pause/resume signaling
     condvar: Arc<Condvar>,
 }
@@ -39,39 +35,37 @@ struct DebuggerWithSignal {
 impl DebuggerWithSignal {
     fn new() -> Self {
         Self {
-            state: Arc::new(Mutex::new(DebuggerState {
-                debugger: Debugger::new(),
-            })),
+            debugger: Arc::new(Mutex::new(Debugger::new())),
             condvar: Arc::new(Condvar::new()),
         }
     }
 
     /// Pause execution
     fn pause(&self) {
-        self.state.lock().unwrap().debugger.pause();
+        self.debugger.lock().unwrap().pause();
     }
 
     /// Resume execution and notify waiting threads
     fn resume(&self) {
-        self.state.lock().unwrap().debugger.resume();
+        self.debugger.lock().unwrap().resume();
         // Wake up all threads waiting on the condition variable
         self.condvar.notify_all();
     }
 
     /// Check if the debugger is paused
     fn is_paused(&self) -> bool {
-        self.state.lock().unwrap().debugger.is_paused()
+        self.debugger.lock().unwrap().is_paused()
     }
 
     /// Forward attach call to inner debugger
     fn attach(&self, context: &mut Context) -> JsResult<()> {
-        self.state.lock().unwrap().debugger.attach(context)
+        self.debugger.lock().unwrap().attach(context)
     }
 
     /// Clone for sharing across threads
     fn clone(&self) -> Self {
         Self {
-            state: Arc::clone(&self.state),
+            debugger: Arc::clone(&self.debugger),
             condvar: Arc::clone(&self.condvar),
         }
     }
@@ -90,13 +84,13 @@ struct EfficientDebugHooks {
 impl EfficientDebugHooks {
     /// Wait for resume using condition variable (efficient, no polling)
     fn wait_for_resume(&self) {
-        // Lock the debugger state
-        let mut state_guard = self.debugger.state.lock().unwrap();
+        // Lock the debugger
+        let mut debugger_guard = self.debugger.debugger.lock().unwrap();
 
         // Wait while paused - the condition variable will atomically release
         // the lock and put the thread to sleep until notified
-        while state_guard.debugger.is_paused() {
-            state_guard = self.debugger.condvar.wait(state_guard).unwrap();
+        while debugger_guard.is_paused() {
+            debugger_guard = self.debugger.condvar.wait(debugger_guard).unwrap();
         }
 
         eprintln!("[Debugger] Resumed!");
