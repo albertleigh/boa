@@ -167,6 +167,10 @@ struct Opt {
     /// executed prior to the expression.
     #[arg(long, short = 'e')]
     expression: Option<String>,
+
+    /// Run in DAP (Debug Adapter Protocol) mode for IDE debugging support.
+    #[arg(long)]
+    dap: bool,
 }
 
 impl Opt {
@@ -411,6 +415,11 @@ fn main() -> Result<()> {
     let _profiler = dhat::Profiler::new_heap();
 
     let args = Opt::parse();
+
+    // If in DAP mode, run the DAP server
+    if args.dap {
+        return debug::dap::run_dap_server().map_err(|e| eyre!(e.to_string()));
+    }
 
     // A channel of expressions to run.
     let (sender, receiver) = std::sync::mpsc::channel::<String>();
