@@ -87,7 +87,6 @@ time = { version = "0.3.44", default-features = false, features = [
     "formatting",
     "macros",
 ] }
-tiny_http = "0.12"
 log = "0.4.29"
 simple_logger = "5.1.0"
 cargo_metadata = "0.23.1"

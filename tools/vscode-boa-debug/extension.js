@@ -116,6 +116,10 @@ class BoaDebugAdapterDescriptorFactory {
             });
 
             if (isListening) {
+                // Server accepted our test connection
+                // Wait a bit to ensure the server has finished handling the test connection
+                // and is ready to accept the real VS Code connection
+                await new Promise(resolve => setTimeout(resolve, 200));
                 return; // Server is ready
             }
 
@@ -140,7 +144,7 @@ class BoaDebugAdapterDescriptorFactory {
 
         if (useHttp) {
             console.log(`[Boa Debug] Using HTTP mode on port ${httpPort}`);
-            
+
             // Check if port is available
             const portAvailable = await this.isPortAvailable(httpPort);
             if (!portAvailable) {
@@ -168,12 +172,30 @@ class BoaDebugAdapterDescriptorFactory {
                     }
                 });
 
-                serverProcess.stdout.on('data', (data) => {
-                    console.log(`[Boa Server] ${data.toString()}`);
+                // Wait for server ready message
+                let serverReady = false;
+                const serverReadyPromise = new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Server did not start within 10 seconds'));
+                    }, 10000);
+
+                    const checkReady = (data) => {
+                        const output = data.toString();
+                        console.log(`[Boa Server STDERR] ${output}`);
+                        
+                        if (output.includes('Ready to accept connections')) {
+                            serverReady = true;
+                            clearTimeout(timeout);
+                            resolve();
+                        }
+                    };
+
+                    serverProcess.stderr.on('data', checkReady);
                 });
 
-                serverProcess.stderr.on('data', (data) => {
-                    console.log(`[Boa Server] ${data.toString()}`);
+                serverProcess.stdout.on('data', (data) => {
+                    const output = data.toString();
+                    console.log(`[Boa Server STDOUT] ${output}`);
                 });
 
                 serverProcess.on('error', (err) => {
@@ -181,9 +203,9 @@ class BoaDebugAdapterDescriptorFactory {
                     vscode.window.showErrorMessage(`Failed to start Boa debug server: ${err.message}`);
                 });
 
-                // Wait for the server to actually start listening
+                // Wait for the server to be ready
                 console.log(`[Boa Debug] Waiting for server to be ready on port ${httpPort}...`);
-                await this.waitForServerReady(httpPort, 10000); // Wait up to 10 seconds
+                await serverReadyPromise;
                 console.log(`[Boa Debug] Server is ready!`);
             }
             

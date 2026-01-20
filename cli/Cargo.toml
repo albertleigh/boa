@@ -27,7 +27,6 @@ color-eyre.workspace = true
 cow-utils.workspace = true
 futures-concurrency.workspace = true
 futures-lite.workspace = true
-tiny_http.workspace = true
 
 [features]
 default = [

@@ -6,8 +6,7 @@
 use super::messages::*;
 use crate::{
     Context, JsResult,
-    debugger::{BreakpointId, DebugApi, Debugger, DebuggerHooks, ScriptId},
-    vm::CallFrame,
+    debugger::{BreakpointId, DebugApi, Debugger, ScriptId},
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -119,9 +118,11 @@ impl DebugSession {
     }
 
     /// Handles the launch request
+    /// The actual execution is handled by the CLI, this just stores the launch state
     pub fn handle_launch(&mut self, _args: LaunchRequestArguments) -> JsResult<()> {
-        // Launch will be handled by the CLI tool
-        // This just marks the session as ready
+        // The CLI will handle creating the context, setting up runtime,
+        // executing the program, and capturing output
+        self.running = false;
         Ok(())
     }
 
