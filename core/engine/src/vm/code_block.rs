@@ -8,6 +8,7 @@ use crate::{
         OrdinaryObject,
         function::{OrdinaryFunction, ThisMode},
     },
+    debugger::ScriptId,
     object::JsObject,
 };
 use bitflags::bitflags;
@@ -150,6 +151,10 @@ pub struct CodeBlock {
 
     /// Bytecode to source code mapping.
     pub(crate) source_info: SourceInfo,
+
+    /// Unique identifier for this script/code block for debugger support
+    #[unsafe_ignore_trace]
+    pub(crate) script_id: Option<ScriptId>,
 }
 
 /// ---- `CodeBlock` public API ----
@@ -176,6 +181,7 @@ impl CodeBlock {
                 name,
                 SpannedSourceText::new_empty(),
             ),
+            script_id: None,
         }
     }
 
@@ -189,6 +195,17 @@ impl CodeBlock {
     #[must_use]
     pub fn path(&self) -> &SourcePath {
         self.source_info.map().path()
+    }
+
+    /// Gets the script ID for this code block (used for debugger support)
+    #[must_use]
+    pub fn script_id(&self) -> Option<ScriptId> {
+        self.script_id
+    }
+
+    /// Sets the script ID for this code block (used for debugger support)
+    pub fn set_script_id(&mut self, script_id: ScriptId) {
+        self.script_id = Some(script_id);
     }
 
     /// Check if the function is traced.
@@ -877,7 +894,8 @@ impl CodeBlock {
             | Instruction::CallSpread
             | Instruction::NewSpread
             | Instruction::SuperCallSpread
-            | Instruction::PopPrivateEnvironment => String::new(),
+            | Instruction::PopPrivateEnvironment
+            | Instruction::Debugger => String::new(),
             Instruction::Reserved1
             | Instruction::Reserved2
             | Instruction::Reserved3
@@ -936,8 +954,7 @@ impl CodeBlock {
             | Instruction::Reserved56
             | Instruction::Reserved57
             | Instruction::Reserved58
-            | Instruction::Reserved59
-            | Instruction::Reserved60 => unreachable!("Reserved opcodes are unreachable"),
+            | Instruction::Reserved59 => unreachable!("Reserved opcodes are unreachable"),
         }
     }
 }

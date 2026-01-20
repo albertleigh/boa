@@ -667,6 +667,18 @@ impl Context {
     }
 
     fn handle_error(&mut self, mut err: JsError) -> ControlFlow<CompletionRecord> {
+        // Call debugger on_exception_unwind hook
+        match self.host_hooks().on_exception_unwind(self) {
+            Err(hook_err) => {
+                // If the hook itself errors, use that error instead
+                err = hook_err;
+            }
+            Ok(_should_pause) => {
+                // TODO(al): support pausing execution
+                // For now, we don't handle positive pause requests from exception hooks
+            }
+        }
+
         // If we hit the execution step limit, bubble up the error to the
         // (Rust) caller instead of trying to handle as an exception.
         if !err.is_catchable() {
@@ -846,6 +858,15 @@ impl Context {
             .get(self.vm.frame.pc as usize)
         {
             let opcode = Opcode::decode(*byte);
+
+            // Call debugger on_step hook if needed
+            if let Err(err) = self.host_hooks().on_step(self) {
+                match self.handle_error(err) {
+                    ControlFlow::Continue(()) => {}
+                    ControlFlow::Break(value) => return value,
+                }
+                continue;
+            }
 
             match self.execute_one(Self::execute_bytecode_instruction, opcode) {
                 ControlFlow::Continue(()) => {}

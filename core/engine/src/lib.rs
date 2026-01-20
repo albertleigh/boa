@@ -87,6 +87,7 @@ pub mod builtins;
 pub mod bytecompiler;
 pub mod class;
 pub mod context;
+pub mod debugger;
 pub mod environments;
 pub mod error;
 pub mod interop;
