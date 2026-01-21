@@ -5,7 +5,7 @@
 //! and handles execution and output capture.
 
 use boa_engine::{
-    Context, JsNativeError, JsResult,
+    Context, JsResult,
     debugger::{
         Debugger,
         dap::{
@@ -14,12 +14,10 @@ use boa_engine::{
         },
     },
     js_error,
-    property::Attribute,
 };
 use boa_gc::{Finalize, Trace};
 use boa_runtime::console::{Console, ConsoleState, Logger};
 use std::env;
-use std::fs;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
@@ -292,7 +290,7 @@ fn handle_tcp_client(
                 // Check if this is a terminate request - end the session
                 if dap_request.command == "terminate" {
                     eprintln!("[BOA-DAP] Terminate request received, ending session");
-                    
+
                     // Send success response
                     let response = ProtocolMessage::Response(Response {
                         seq: 0,
@@ -302,14 +300,14 @@ fn handle_tcp_client(
                         message: None,
                         body: None,
                     });
-                    
+
                     let mut w = writer.lock().unwrap();
                     send_dap_message(&response, &mut *w, debug)?;
-                    
+
                     // Break from the loop to end the session
                     break;
                 }
-                
+
                 // Check if this is a launch request - we need to create Context here
                 let responses = if dap_request.command == "launch" {
                     handle_launch_request_with_context(
@@ -397,11 +395,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
     let writer_clone = writer.clone();
     let context_setup = Box::new(move |context: &mut Context| -> JsResult<()> {
         // Create DAP logger and register console with it
-        let logger = DapLogger {
-            writer: writer_clone,
-            seq_counter: Arc::new(Mutex::new(1)),
-            debug,
-        };
+        let logger = DapLogger::new(writer_clone.clone(), Arc::new(Mutex::new(1)), debug);
 
         // Register console with the DAP logger
         Console::register_with_logger(logger, context)?;

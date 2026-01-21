@@ -145,6 +145,7 @@ impl DapServer {
             "variables" => self.handle_variables(request),
             "evaluate" => self.handle_evaluate(request),
             "threads" => self.handle_threads(request),
+            "source" => self.handle_source(request),
             "disconnect" => {
                 return vec![self.create_response(request_seq, &command, true, None, None)];
             }
@@ -433,6 +434,70 @@ impl DapServer {
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
         })?;
+
+        Ok(vec![self.create_response(
+            request.seq,
+            &request.command,
+            true,
+            None,
+            Some(body),
+        )])
+    }
+
+    fn handle_source(&mut self, request: Request) -> Result<Vec<ProtocolMessage>, JsError> {
+        let args: SourceArguments = serde_json::from_value(
+            request.arguments.unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
+
+        // Get the source path from arguments
+        let source_path = if let Some(source) = &args.source {
+            if let Some(path) = &source.path {
+                path.clone()
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        // Handle special case: "replinput" is for REPL/debug console input
+        // This doesn't have actual source file content, return empty
+        let content = if source_path == "replinput" {
+            String::new()
+        } else if !source_path.is_empty() {
+            // Try to read the actual file
+            match std::fs::read_to_string(&source_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    return Err(JsNativeError::typ()
+                        .with_message(format!("Failed to read source file: {}", e))
+                        .into());
+                }
+            }
+        } else {
+            // No path provided, check if we have a program path from launch
+            let program_path = self.session.lock().unwrap().get_program_path().map(|s| s.to_string());
+
+            if let Some(path) = program_path {
+                match std::fs::read_to_string(&path) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        return Err(JsNativeError::typ()
+                            .with_message(format!("Failed to read program file: {}", e))
+                            .into());
+                    }
+                }
+            } else {
+                String::new()
+            }
+        };
+
+        // Return success response with source content
+        let body = serde_json::json!({
+            "content": content,
+            "mimeType": "text/javascript"
+        });
 
         Ok(vec![self.create_response(
             request.seq,

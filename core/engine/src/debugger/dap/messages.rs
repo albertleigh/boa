@@ -176,6 +176,15 @@ pub struct EvaluateArguments {
     pub format: Option<ValueFormat>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceArguments {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_reference: Option<i64>,
+}
+
 // ============================================================================
 // Response Bodies
 // ============================================================================
