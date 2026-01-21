@@ -9,10 +9,16 @@ use std::thread;
 
 /// Task to be executed in the evaluation thread
 pub(super) enum EvalTask {
-    /// Execute JavaScript code
+    /// Execute JavaScript code (blocking - waits for result)
     Execute {
         source: String,
         result_tx: mpsc::Sender<Result<String, String>>,
+    },
+    /// Execute JavaScript code non-blocking (doesn't wait for result)
+    /// Used for program execution that may hit breakpoints
+    ExecuteNonBlocking {
+        source: String,
+        file_path: Option<String>,
     },
     /// Get stack trace
     GetStackTrace {
@@ -103,6 +109,32 @@ impl DebugEvalContext {
                         };
                         let _ = result_tx.send(send_result);
                     }
+                    EvalTask::ExecuteNonBlocking { source, file_path } => {
+                        eprintln!("[DebugEvalContext] Starting non-blocking execution{}", 
+                            file_path.as_ref().map(|p| format!(" of {}", p)).unwrap_or_default());
+                        
+                        // Execute without blocking - the eval thread continues to process other tasks
+                        let result = context.eval(Source::from_bytes(&source));
+                        
+                        match result {
+                            Ok(v) => {
+                                if !v.is_undefined() {
+                                    eprintln!("[DebugEvalContext] Execution completed with result: {}", 
+                                        v.display());
+                                } else {
+                                    eprintln!("[DebugEvalContext] Execution completed");
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("[DebugEvalContext] Execution error: {}", e);
+                            }
+                        }
+                        
+                        // Run any pending jobs (promises, etc.)
+                        if let Err(e) = context.run_jobs() {
+                            eprintln!("[DebugEvalContext] Job execution error: {}", e);
+                        }
+                    }
                     EvalTask::GetStackTrace { result_tx } => {
                         let stack = crate::debugger::DebugApi::get_call_stack(&context);
                         let frames = stack
@@ -135,17 +167,31 @@ impl DebugEvalContext {
         })
     }
 
-    /// Executes JavaScript code in the evaluation thread
+    /// Executes JavaScript code in the evaluation thread (blocking)
+    /// This will wait for the result, so it should NOT be used for program execution
+    /// that may hit breakpoints. Use execute_async instead.
     pub fn execute(&self, source: String) -> Result<String, String> {
         let (result_tx, result_rx) = mpsc::channel();
         
         self.task_tx
             .send(EvalTask::Execute { source, result_tx })
             .map_err(|e| format!("Failed to send task: {}", e))?;
-        
+
+        // This will block the current thread until the result is received
         result_rx
             .recv()
             .map_err(|e| format!("Failed to receive result: {}", e))?
+    }
+
+    /// Executes JavaScript code asynchronously without blocking
+    /// The execution happens in the eval thread and this method returns immediately
+    /// Use this for program execution that may hit breakpoints
+    pub fn execute_async(&self, source: String, file_path: Option<String>) -> Result<(), String> {
+        self.task_tx
+            .send(EvalTask::ExecuteNonBlocking { source, file_path })
+            .map_err(|e| format!("Failed to send task: {}", e))?;
+        
+        Ok(())
     }
 
     /// Gets the current stack trace from the evaluation thread

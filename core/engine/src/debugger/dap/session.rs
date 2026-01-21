@@ -173,28 +173,25 @@ impl DebugSession {
 
         eprintln!("[DebugSession] Evaluation context created");
 
-        // If we have a program path, read and execute it immediately
+        // If we have a program path, read and start executing it asynchronously
+        // Don't wait for the result as execution may hit breakpoints
         if let Some(program_path) = &self.program_path {
-            eprintln!("[DebugSession] Executing program: {}", program_path);
+            eprintln!("[DebugSession] Starting program execution: {}", program_path);
             
             // Read the program file
             let source = std::fs::read_to_string(program_path)
                 .map_err(|e| crate::JsNativeError::error()
                     .with_message(format!("Failed to read program file {}: {}", program_path, e)))?;
             
-            // Execute the program in the evaluation context
-            match self.execute(source) {
-                Ok(result) => {
-                    eprintln!("[DebugSession] Program executed successfully");
-                    return Ok(Some(result));
-                }
-                Err(e) => {
-                    eprintln!("[DebugSession] Execution error: {}", e);
-                    return Err(crate::JsNativeError::error()
-                        .with_message(format!("Execution error: {}", e))
-                        .into());
-                }
+            // Execute the program asynchronously (non-blocking)
+            // The eval thread will process it and can be interrupted by breakpoints
+            if let Some(ctx) = &self.eval_context {
+                ctx.execute_async(source, Some(program_path.clone()))
+                    .map_err(|e| crate::JsNativeError::error()
+                        .with_message(format!("Failed to start execution: {}", e)))?;
             }
+            
+            eprintln!("[DebugSession] Program execution started (non-blocking)");
         }
 
         Ok(None)
