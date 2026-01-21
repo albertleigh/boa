@@ -3,7 +3,7 @@
 //! This module implements the Debug Adapter Protocol server that handles
 //! JSON-RPC communication with DAP clients (like VS Code).
 
-use super::{Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession};
+use super::{Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession, DebugEvent};
 use crate::{JsError, JsNativeError};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -107,11 +107,11 @@ impl DapServer {
 
             // Handle the message
             if let ProtocolMessage::Request(request) = message {
-                let responses = self.handle_request(request);
+                let mut messages = self.handle_request(request);
 
-                // Send all responses
-                for response in responses {
-                    self.send_message(&response, &mut stdout)?;
+                // Send all responses and events
+                for message in messages {
+                    self.send_message(&message, &mut stdout)?;
                 }
             }
         }
@@ -205,12 +205,14 @@ impl DapServer {
         // Note: In practice, dap.rs intercepts launch and handles context creation
         // This path is just for completeness
         let setup = Box::new(|_ctx: &mut crate::Context| Ok(()));
-        let result = self.session.lock().unwrap().handle_launch(args, setup)?;
+        let event_handler = Box::new(|_event| {}); // No-op event handler for stdio mode
+        self.session.lock().unwrap().handle_launch(args, setup, event_handler)?;
+        
+        // For stdio mode in engine, we don't use events
+        // TCP mode (in CLI) provides actual event handler
 
-        // Include execution result in response body if available
-        let body = result.map(|res| serde_json::json!({
-            "result": res
-        }));
+        // No execution result since execution happens asynchronously
+        let body = None;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -554,5 +556,29 @@ impl DapServer {
         writer.flush()?;
 
         Ok(())
+    }
+
+    /// Handles a debug event from the eval thread
+    fn handle_debug_event(&mut self, event: DebugEvent) -> ProtocolMessage {
+        match event {
+            DebugEvent::Stopped { reason, description } => {
+                let body = serde_json::to_value(StoppedEventBody {
+                    reason,
+                    description,
+                    thread_id: Some(1), // Boa is single-threaded
+                    preserve_focus_hint: None,
+                    text: None,
+                    all_threads_stopped: true,
+                    hit_breakpoint_ids: None,
+                })
+                .ok();
+                
+                self.create_event("stopped", body)
+            }
+            DebugEvent::Shutdown => {
+                // Shutdown event - just create a terminated event
+                self.create_event("terminated", None)
+            }
+        }
     }
 }

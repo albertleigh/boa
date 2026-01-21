@@ -7,6 +7,18 @@ use crate::{Context, JsResult, Source, context::ContextBuilder};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
+/// Event that can be sent from eval thread to DAP server
+#[derive(Debug, Clone)]
+pub enum DebugEvent {
+    /// Execution stopped (paused)
+    Stopped {
+        reason: String,
+        description: Option<String>,
+    },
+    /// Shutdown signal to terminate event forwarder thread
+    Shutdown,
+}
+
 /// Task to be executed in the evaluation thread
 pub(super) enum EvalTask {
     /// Execute JavaScript code (blocking - waits for result)
@@ -49,6 +61,8 @@ pub struct DebugEvalContext {
     handle: Option<thread::JoinHandle<()>>,
     condvar: Arc<Condvar>,
     debugger: Arc<Mutex<crate::debugger::Debugger>>,
+    /// Sender for debug events (kept to send shutdown signal)
+    event_tx: mpsc::Sender<DebugEvent>,
 }
 
 /// Type for context setup function that can be sent across threads
@@ -57,12 +71,17 @@ type ContextSetup = Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>;
 impl DebugEvalContext {
     /// Creates a new debug evaluation context
     /// Takes a setup function that will be called after Context is built in the eval thread
+    /// Returns (DebugEvalContext, Receiver<DebugEvent>) - the receiver should be used to listen for events
     pub fn new(
         context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
         debugger: Arc<Mutex<crate::debugger::Debugger>>,
         condvar: Arc<Condvar>,
-    ) -> JsResult<Self> {
+    ) -> JsResult<(Self, mpsc::Receiver<DebugEvent>)> {
         let (task_tx, task_rx) = mpsc::channel::<EvalTask>();
+        let (event_tx, event_rx) = mpsc::channel::<DebugEvent>();
+
+        // Clone event_tx for the hooks, keep one for the struct
+        let event_tx_for_hooks = event_tx.clone();
 
         // Clone Arc references for the thread
         let debugger_clone = debugger.clone();
@@ -73,6 +92,7 @@ impl DebugEvalContext {
             let hooks = std::rc::Rc::new(DebugHooks {
                 debugger: debugger_clone.clone(),
                 condvar: condvar_clone.clone(),
+                event_tx: event_tx_for_hooks,
             });
 
             // Build the context with debug hooks IN THIS THREAD
@@ -167,12 +187,15 @@ impl DebugEvalContext {
             }
         });
 
-        Ok(Self {
+        let ctx = Self {
             task_tx,
             handle: Some(handle),
             condvar: condvar.clone(),
             debugger: debugger.clone(),
-        })
+            event_tx,
+        };
+        
+        Ok((ctx, event_rx))
     }
 
     /// Executes JavaScript code in the evaluation thread (blocking)
@@ -232,7 +255,7 @@ impl DebugEvalContext {
 impl Drop for DebugEvalContext {
     fn drop(&mut self) {
         eprintln!("[DebugEvalContext] Dropping - initiating shutdown");
-        
+
         // Signal shutdown to break any wait_for_resume loops
         {
             let mut debugger = self.debugger.lock().unwrap();
@@ -242,9 +265,12 @@ impl Drop for DebugEvalContext {
         // Wake up any threads waiting on the condvar
         self.condvar.notify_all();
         
-        // Send terminate signal
-        let _ = self.task_tx.send(EvalTask::Terminate);
+        // Send shutdown event to terminate any event forwarder threads
+        let _ = self.event_tx.send(DebugEvent::Shutdown);
         
+        // Send terminate signal to eval thread
+        let _ = self.task_tx.send(EvalTask::Terminate);
+
         // Wait for thread to finish with a timeout
         if let Some(handle) = self.handle.take() {
             match handle.join() {
@@ -259,6 +285,7 @@ impl Drop for DebugEvalContext {
 struct DebugHooks {
     debugger: Arc<Mutex<crate::debugger::Debugger>>,
     condvar: Arc<Condvar>,
+    event_tx: mpsc::Sender<DebugEvent>,
 }
 
 impl crate::context::HostHooks for DebugHooks {
@@ -268,6 +295,12 @@ impl crate::context::HostHooks for DebugHooks {
 
         // Pause execution
         self.debugger.lock().unwrap().pause();
+
+        // Send stopped event to DAP server
+        let _ = self.event_tx.send(DebugEvent::Stopped {
+            reason: "pause".to_string(),
+            description: Some(format!("Paused on debugger statement at {}", frame)),
+        });
 
         // Wait for resume using condition variable
         // Returns error if shutting down
@@ -279,6 +312,13 @@ impl crate::context::HostHooks for DebugHooks {
     fn on_step(&self, _context: &mut Context) -> JsResult<()> {
         if self.debugger.lock().unwrap().is_paused() {
             eprintln!("[DebugHooks] Paused - waiting for resume...");
+            
+            // Send stopped event to DAP server
+            let _ = self.event_tx.send(DebugEvent::Stopped {
+                reason: "step".to_string(),
+                description: Some("Paused on step".to_string()),
+            });
+            
             // Returns error if shutting down
             self.wait_for_resume()?;
         }

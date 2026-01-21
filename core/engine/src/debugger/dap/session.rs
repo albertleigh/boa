@@ -3,13 +3,13 @@
 //! This module implements the debug session that connects the DAP protocol
 //! with Boa's debugger API.
 
-use super::{eval_context::DebugEvalContext, messages::*};
+use super::{eval_context::{DebugEvalContext, DebugEvent}, messages::*};
 use crate::{
     Context, JsResult,
     debugger::{BreakpointId, Debugger, ScriptId},
 };
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 
 /// A debug session manages the connection between DAP and Boa's debugger
 pub struct DebugSession {
@@ -151,18 +151,20 @@ impl DebugSession {
     /// Handles the launch request
     /// Creates the evaluation context in a dedicated thread
     /// Takes a setup function that will be called in the eval thread after Context is created
+    /// Takes an event handler that will be called for each debug event (for TCP mode)
+    /// Spawns event forwarder thread BEFORE executing program to avoid missing events
     /// If a program path is provided, automatically reads and executes it
-    /// Returns the execution result if a program was executed
     pub fn handle_launch(
         &mut self,
         args: LaunchRequestArguments,
         context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
-    ) -> JsResult<Option<String>> {
+        event_handler: Box<dyn Fn(DebugEvent) + Send + 'static>,
+    ) -> JsResult<()> {
         // Store the program path for later execution
         self.program_path = args.program.clone();
 
         // Create the evaluation context, passing the setup function to the thread
-        let eval_context = DebugEvalContext::new(
+        let (eval_context, event_rx) = DebugEvalContext::new(
             context_setup,
             self.debugger.clone(),
             self.condvar.clone(),
@@ -173,11 +175,37 @@ impl DebugSession {
 
         eprintln!("[DebugSession] Evaluation context created");
 
+        // Spawn event forwarder thread BEFORE executing program
+        // This ensures no events are missed from the first program execution
+        std::thread::spawn(move || {
+            eprintln!("[DebugSession] Event forwarder thread started");
+
+            // Block on receiver - clean, no polling, no locks
+            while let Ok(event) = event_rx.recv() {
+                match &event {
+                    DebugEvent::Shutdown => {
+                        eprintln!("[DebugSession] Shutdown signal received");
+                        event_handler(event);
+                        break;
+                    }
+                    DebugEvent::Stopped { reason, .. } => {
+                        eprintln!("[DebugSession] Forwarding stopped event: {}", reason);
+                        event_handler(event);
+                    }
+                }
+            }
+
+            eprintln!("[DebugSession] Event forwarder thread terminated cleanly");
+        });
+
+        eprintln!("[DebugSession] Event forwarder thread spawned");
+
+        // NOW execute the program after forwarder is ready
         // If we have a program path, read and start executing it asynchronously
         // Don't wait for the result as execution may hit breakpoints
         if let Some(program_path) = &self.program_path {
             eprintln!("[DebugSession] Starting program execution: {}", program_path);
-            
+
             // Read the program file
             let source = std::fs::read_to_string(program_path)
                 .map_err(|e| crate::JsNativeError::error()
@@ -190,11 +218,11 @@ impl DebugSession {
                     .map_err(|e| crate::JsNativeError::error()
                         .with_message(format!("Failed to start execution: {}", e)))?;
             }
-            
+
             eprintln!("[DebugSession] Program execution started (non-blocking)");
         }
 
-        Ok(None)
+        Ok(())
     }
 
     /// Gets the program path from the launch request

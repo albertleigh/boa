@@ -25,6 +25,7 @@ pub mod transport;
 pub use messages::*;
 pub use server::DapServer;
 pub use session::DebugSession;
+pub use eval_context::DebugEvent;
 
 use serde::{Deserialize, Serialize};
 

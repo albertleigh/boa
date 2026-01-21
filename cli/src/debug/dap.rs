@@ -9,7 +9,7 @@ use boa_engine::{
     debugger::{
         Debugger,
         dap::{
-            DapServer, Event, ProtocolMessage, Request, Response, messages::*,
+            DapServer, DebugEvent, Event, ProtocolMessage, Request, Response, messages::*,
             session::DebugSession,
         },
     },
@@ -403,10 +403,50 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
         Ok(())
     });
 
-    // Call handle_launch with the setup function - Context will be created in eval thread
-    let result = {
+    // Create event handler callback for TCP mode
+    // This will be called by the forwarder thread in session.rs for each event
+    let writer_clone = writer.clone();
+    let event_handler = Box::new(move |event: DebugEvent| {
+        match event {
+            DebugEvent::Shutdown => {
+                eprintln!("[BOA-DAP] Event handler received shutdown");
+            }
+            DebugEvent::Stopped { reason, description } => {
+                eprintln!("[BOA-DAP] Event handler sending stopped event: {}", reason);
+
+                // Convert to DAP protocol message
+                let dap_message = ProtocolMessage::Event(Event {
+                    seq: 0,
+                    event: "stopped".to_string(),
+                    body: Some(
+                        serde_json::to_value(StoppedEventBody {
+                            reason,
+                            description,
+                            thread_id: Some(1),
+                            preserve_focus_hint: None,
+                            text: None,
+                            all_threads_stopped: true,
+                            hit_breakpoint_ids: None,
+                        })
+                        .unwrap(),
+                    ),
+                });
+                
+                // Send immediately to TCP stream
+                if let Ok(mut w) = writer_clone.lock() {
+                    if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
+                        eprintln!("[BOA-DAP] Failed to send event: {}", e);
+                    }
+                }
+            }
+        }
+    });
+
+    // Call handle_launch - it will spawn forwarder thread and execute program
+    // Forwarder thread is spawned BEFORE program execution to avoid missing events
+    {
         let mut sess = session.lock().unwrap();
-        sess.handle_launch(launch_args, context_setup)
+        sess.handle_launch(launch_args, context_setup, event_handler)
             .map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::Other,
@@ -415,10 +455,8 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
             })?
     };
 
-    // Include execution result in response body if available
-    let body = result.map(|res| serde_json::json!({
-        "result": res
-    }));
+    // No execution result to include since execution happens asynchronously
+    let body = None;
 
     // Return success response directly (don't call dap_server.handle_request)
     let response = ProtocolMessage::Response(Response {
