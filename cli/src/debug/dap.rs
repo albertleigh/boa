@@ -5,11 +5,10 @@
 //! and handles execution and output capture.
 
 use boa_engine::{
-    Context, JsResult, JsValue, Source,
-    context::ContextBuilder,
+    Context, JsResult, JsNativeError,
     debugger::{
         Debugger,
-        dap::{DapServer, session::DebugSession, ProtocolMessage, Request, Event, messages::*},
+        dap::{DapServer, session::DebugSession, ProtocolMessage, Request, Response, Event, messages::*},
     },
     js_error,
     property::Attribute,
@@ -217,7 +216,6 @@ fn send_message_internal<W: Write>(message: &ProtocolMessage, writer: &mut W, de
 }
 
 /// Handle a single TCP client connection using DAP protocol
-/// This intercepts launch requests to handle execution and output capture at the CLI level
 fn handle_tcp_client(
     stream: std::net::TcpStream,
     session: Arc<Mutex<DebugSession>>,
@@ -229,12 +227,6 @@ fn handle_tcp_client(
     let writer = Arc::new(Mutex::new(stream));
 
     let mut dap_server = DapServer::with_debug(session.clone(), debug);
-    
-    // Sequence counter shared with logger for creating events
-    let seq_counter = Arc::new(Mutex::new(100i64)); // Start at 100 to avoid conflicts with server seq
-    
-    // Create context with runtime and custom logger that sends output immediately
-    let mut context = create_context_with_logger(writer.clone(), seq_counter, debug);
 
     loop {
         // Read the Content-Length header
@@ -284,31 +276,33 @@ fn handle_tcp_client(
         // Parse DAP message
         match serde_json::from_slice::<ProtocolMessage>(&buffer) {
             Ok(ProtocolMessage::Request(dap_request)) => {
-                // Check if this is a launch request - handle it specially
-                if dap_request.command == "launch" {
-                    // Handle launch at CLI level
-                    let responses = handle_launch_request(
+                // Check if this is a launch request - we need to create Context here
+                let responses = if dap_request.command == "launch" {
+                    handle_launch_request_with_context(
                         dap_request,
                         &mut dap_server,
-                        &mut context,
+                        session.clone(),
                         writer.clone(),
                         debug,
-                    )?;
-                    
-                    // Send all responses
-                    for response in responses {
-                        let mut w = writer.lock().unwrap();
-                        send_dap_message(&response, &mut *w, debug)?;
-                    }
+                    )?
+                } else if dap_request.command == "configurationDone" {
+                    // After configurationDone, execute the program
+                    handle_configuration_done_with_execution(
+                        dap_request,
+                        &mut dap_server,
+                        session.clone(),
+                        writer.clone(),
+                        debug,
+                    )?
                 } else {
-                    // Process other requests normally through the server
-                    let responses = dap_server.handle_request(dap_request);
+                    // Process all other requests normally through the server
+                    dap_server.handle_request(dap_request)
+                };
 
-                    // Send all responses
-                    for response in responses {
-                        let mut w = writer.lock().unwrap();
-                        send_dap_message(&response, &mut *w, debug)?;
-                    }
+                // Send all responses
+                for response in responses {
+                    let mut w = writer.lock().unwrap();
+                    send_dap_message(&response, &mut *w, debug)?;
                 }
             }
             Err(e) => {
@@ -337,125 +331,159 @@ fn send_dap_message<W: io::Write>(message: &ProtocolMessage, writer: &mut W, deb
     Ok(())
 }
 
-/// Handle launch request: execute JS and capture output
-fn handle_launch_request<W: Write + 'static>(
-    mut request: Request,
-    dap_server: &mut DapServer,
-    context: &mut Context,
+/// Handle launch request and create Context setup function with runtimes
+fn handle_launch_request_with_context<W: Write + Send + 'static>(
+    request: Request,
+    _dap_server: &mut DapServer,
+    session: Arc<Mutex<DebugSession>>,
     writer: Arc<Mutex<W>>,
     debug: bool,
 ) -> io::Result<Vec<ProtocolMessage>> {
-    // Parse launch arguments to get the program path
-    let launch_args: LaunchRequestArguments = serde_json::from_value(
-        request.arguments.clone().unwrap_or(serde_json::Value::Null)
-    ).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    // Parse launch arguments
+    let launch_args: LaunchRequestArguments = if let Some(args) = &request.arguments {
+        serde_json::from_value(args.clone())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+    } else {
+        LaunchRequestArguments {
+            no_debug: None,
+            program: None,
+            args: None,
+            cwd: None,
+            env: None,
+            stop_on_entry: None,
+        }
+    };
+
+    // Create a setup function that will register console and other runtimes
+    // This function will be called in the eval thread after Context is created
+    let writer_clone = writer.clone();
+    let context_setup = Box::new(move |context: &mut Context| -> JsResult<()> {
+        // Create DAP logger and register console with it
+        let logger = DapLogger {
+            writer: writer_clone,
+            seq_counter: Arc::new(Mutex::new(1)),
+            debug,
+        };
+        
+        // Register console with the DAP logger
+        Console::register_with_logger(logger, context)?;
+        
+        Ok(())
+    });
     
-    // First, let the DAP server handle the launch request (validates args, etc.)
+    // Call handle_launch with the setup function - Context will be created in eval thread
+    {
+        let mut sess = session.lock().unwrap();
+        sess.handle_launch(launch_args, context_setup)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Failed to handle launch: {}", e)))?;
+    }
+    
+    // Return success response directly (don't call dap_server.handle_request)
+    let response = ProtocolMessage::Response(Response {
+        seq: 0,
+        request_seq: request.seq,
+        success: true,
+        command: request.command,
+        message: None,
+        body: None,
+    });
+    
+    Ok(vec![response])
+}
+
+/// Handle configurationDone request and execute the program
+fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
+    request: Request,
+    dap_server: &mut DapServer,
+    session: Arc<Mutex<DebugSession>>,
+    writer: Arc<Mutex<W>>,
+    debug: bool,
+) -> io::Result<Vec<ProtocolMessage>> {
+    // First, let the DAP server handle configurationDone normally
     let responses = dap_server.handle_request(request);
     
-    // Execute the program if specified
-    if let Some(program_path) = launch_args.program {
-        eprintln!("[DAP-CLI] Executing: {}", program_path);
+    // Get the program path from the session
+    let program_path = {
+        let sess = session.lock().unwrap();
+        sess.get_program_path().map(|s| s.to_string())
+    };
+    
+    if let Some(path) = program_path {
+        eprintln!("[DAP-CLI] Executing program: {}", path);
         
-        // Read the file
-        match fs::read_to_string(&program_path) {
-            Ok(source_code) => {
-                // Execute the script - console output is sent immediately via DapLogger
-                match context.eval(Source::from_bytes(&source_code)) {
-                    Ok(result) => {
-                        // Send the result if not undefined
-                        if !result.is_undefined() {
-                            if let Ok(result_str) = result.to_string(context) {
-                                let output_event = dap_server.create_event(
-                                    "output",
-                                    Some(serde_json::to_value(OutputEventBody {
-                                        category: Some("stdout".to_string()),
-                                        output: result_str.to_std_string_escaped() + "\n",
-                                        group: None,
-                                        variables_reference: None,
-                                        source: None,
-                                        line: None,
-                                        column: None,
-                                        data: None,
-                                    }).unwrap())
-                                );
-                                
-                                let mut w = writer.lock().unwrap();
-                                send_dap_message(&output_event, &mut *w, debug)?;
-                            }
+        // Read the JavaScript file
+        match std::fs::read_to_string(&path) {
+            Ok(source) => {
+                // Execute the program in the evaluation thread
+                let sess = session.lock().unwrap();
+                match sess.execute(source) {
+                    Ok(_result) => {
+                        eprintln!("[DAP-CLI] Program executed successfully");
+                        
+                        // Send terminated event
+                        let mut w = writer.lock().unwrap();
+                        let terminated_event = ProtocolMessage::Event(Event {
+                            seq: 0,
+                            event: "terminated".to_string(),
+                            body: None,
+                        });
+                        if let Err(e) = send_dap_message(&terminated_event, &mut *w, debug) {
+                            eprintln!("[DAP-CLI] Failed to send terminated event: {}", e);
                         }
                     }
                     Err(e) => {
-                        // Send error output
-                        let error_event = dap_server.create_event(
-                            "output",
-                            Some(serde_json::to_value(OutputEventBody {
-                                category: Some("stderr".to_string()),
-                                output: format!("Error: {}\n", e.to_string()),
-                                group: None,
-                                variables_reference: None,
-                                source: None,
-                                line: None,
-                                column: None,
-                                data: None,
-                            }).unwrap())
-                        );
+                        eprintln!("[DAP-CLI] Execution error: {:?}", e);
                         
+                        // Send output event with error
                         let mut w = writer.lock().unwrap();
-                        send_dap_message(&error_event, &mut *w, debug)?;
+                        let output_event = ProtocolMessage::Event(Event {
+                            seq: 0,
+                            event: "output".to_string(),
+                            body: Some(serde_json::json!({
+                                "category": "stderr",
+                                "output": format!("Execution error: {:?}\n", e)
+                            })),
+                        });
+                        let _ = send_dap_message(&output_event, &mut *w, debug);
+                        
+                        // Send terminated event
+                        let terminated_event = ProtocolMessage::Event(Event {
+                            seq: 0,
+                            event: "terminated".to_string(),
+                            body: None,
+                        });
+                        let _ = send_dap_message(&terminated_event, &mut *w, debug);
                     }
                 }
             }
             Err(e) => {
-                // Send file read error
-                let error_event = dap_server.create_event(
-                    "output",
-                    Some(serde_json::to_value(OutputEventBody {
-                        category: Some("stderr".to_string()),
-                        output: format!("Failed to read file: {}\n", e),
-                        group: None,
-                        variables_reference: None,
-                        source: None,
-                        line: None,
-                        column: None,
-                        data: None,
-                    }).unwrap())
-                );
+                eprintln!("[DAP-CLI] Failed to read file {}: {}", path, e);
                 
+                // Send output event with file read error
                 let mut w = writer.lock().unwrap();
-                send_dap_message(&error_event, &mut *w, debug)?;
+                let output_event = ProtocolMessage::Event(Event {
+                    seq: 0,
+                    event: "output".to_string(),
+                    body: Some(serde_json::json!({
+                        "category": "stderr",
+                        "output": format!("Failed to read file {}: {}\n", path, e)
+                    })),
+                });
+                let _ = send_dap_message(&output_event, &mut *w, debug);
+                
+                // Send terminated event
+                let terminated_event = ProtocolMessage::Event(Event {
+                    seq: 0,
+                    event: "terminated".to_string(),
+                    body: None,
+                });
+                let _ = send_dap_message(&terminated_event, &mut *w, debug);
             }
         }
-        
-        // Send terminated event
-        let terminated_event = dap_server.create_event(
-            "terminated",
-            Some(serde_json::to_value(TerminatedEventBody {
-                restart: None,
-            }).unwrap())
-        );
-        
-        let mut w = writer.lock().unwrap();
-        send_dap_message(&terminated_event, &mut *w, debug)?;
+    } else {
+        eprintln!("[DAP-CLI] Configuration done (no program to execute)");
     }
     
     Ok(responses)
 }
 
-/// Create a Context with runtime and custom DAP logger
-fn create_context_with_logger<W: Write + 'static>(
-    writer: Arc<Mutex<W>>,
-    seq_counter: Arc<Mutex<i64>>,
-    debug: bool,
-) -> Context {
-    let mut context = ContextBuilder::new().build().expect("Failed to create context");
-
-    // Add console support with custom logger that sends output immediately
-    let logger = DapLogger::new(writer, seq_counter, debug);
-    let console = Console::init_with_logger(logger, &mut context);
-    context
-        .register_global_property(Console::NAME, console, Attribute::all())
-        .expect("Failed to register console");
-    
-    context
-}

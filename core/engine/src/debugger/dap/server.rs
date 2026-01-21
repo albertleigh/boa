@@ -27,8 +27,8 @@ pub struct DapServer {
 pub enum TransportMode {
     /// Standard input/output (default)
     Stdio,
-    /// HTTP server on specified port
-    Http(u16),
+    /// TCP server on specified port
+    Tcp(u16),
 }
 
 impl DapServer {
@@ -63,9 +63,9 @@ impl DapServer {
     pub fn run_with_transport(&mut self, mode: TransportMode) -> io::Result<()> {
         match mode {
             TransportMode::Stdio => self.run_stdio(),
-            TransportMode::Http(port) => Err(io::Error::new(
+            TransportMode::Tcp(_port) => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "HTTP transport not implemented in boa_engine. Use boa_cli for HTTP support.",
+                "TCP transport not implemented in boa_engine. Use boa_cli for HTTP support.",
             )),
         }
     }
@@ -201,7 +201,10 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        self.session.lock().unwrap().handle_launch(args)?;
+        // Note: In practice, dap.rs intercepts launch and handles context creation
+        // This path is just for completeness
+        let setup = Box::new(|_ctx: &mut crate::Context| Ok(()));
+        self.session.lock().unwrap().handle_launch(args, setup)?;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -341,11 +344,24 @@ impl DapServer {
     }
 
     fn handle_stack_trace(&mut self, request: Request) -> Result<Vec<ProtocolMessage>, JsError> {
-        // This would need a context reference - for now, return empty
-        // TODO: Implement proper context passing
-        Err(JsNativeError::error()
-            .with_message("Stack trace not yet implemented")
-            .into())
+        let args: StackTraceArguments = serde_json::from_value(
+            request.arguments.unwrap_or(serde_json::Value::Null),
+        )
+        .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
+
+        let response_body = self.session.lock().unwrap().handle_stack_trace(args)?;
+
+        let body = serde_json::to_value(response_body).map_err(|e| {
+            JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
+        })?;
+
+        Ok(vec![self.create_response(
+            request.seq,
+            &request.command,
+            true,
+            None,
+            Some(body),
+        )])
     }
 
     fn handle_scopes(&mut self, request: Request) -> Result<Vec<ProtocolMessage>, JsError> {

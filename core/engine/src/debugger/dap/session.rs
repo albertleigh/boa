@@ -3,18 +3,27 @@
 //! This module implements the debug session that connects the DAP protocol
 //! with Boa's debugger API.
 
-use super::messages::*;
+use super::{eval_context::DebugEvalContext, messages::*};
 use crate::{
     Context, JsResult,
-    debugger::{BreakpointId, DebugApi, Debugger, ScriptId},
+    debugger::{BreakpointId, Debugger, ScriptId},
 };
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// A debug session manages the connection between DAP and Boa's debugger
 pub struct DebugSession {
     /// The Boa debugger instance
     debugger: Arc<Mutex<Debugger>>,
+
+    /// Condition variable for pause/resume signaling
+    condvar: Arc<Condvar>,
+
+    /// The evaluation context (runs in dedicated thread)
+    eval_context: Option<DebugEvalContext>,
+
+    /// Program path from launch request
+    program_path: Option<String>,
 
     /// Mapping from source paths to script IDs
     source_to_script: HashMap<String, ScriptId>,
@@ -65,6 +74,9 @@ impl DebugSession {
     pub fn new(debugger: Arc<Mutex<Debugger>>) -> Self {
         Self {
             debugger,
+            condvar: Arc::new(Condvar::new()),
+            eval_context: None,
+            program_path: None,
             source_to_script: HashMap::new(),
             breakpoint_mapping: HashMap::new(),
             next_breakpoint_id: 1,
@@ -75,6 +87,25 @@ impl DebugSession {
             variable_references: HashMap::new(),
             next_variable_reference: 1,
         }
+    }
+
+    /// Pauses execution
+    pub fn pause(&mut self) {
+        self.debugger.lock().unwrap().pause();
+    }
+
+    /// Resumes execution and notifies waiting threads
+    pub fn resume(&mut self) {
+        self.debugger.lock().unwrap().resume();
+        self.running = true;
+        self.stopped_reason = None;
+        // Wake up all threads waiting on the condition variable
+        self.condvar.notify_all();
+    }
+
+    /// Checks if the debugger is paused
+    pub fn is_paused(&self) -> bool {
+        self.debugger.lock().unwrap().is_paused()
     }
 
     /// Handles the initialize request
@@ -118,12 +149,41 @@ impl DebugSession {
     }
 
     /// Handles the launch request
-    /// The actual execution is handled by the CLI, this just stores the launch state
-    pub fn handle_launch(&mut self, _args: LaunchRequestArguments) -> JsResult<()> {
-        // The CLI will handle creating the context, setting up runtime,
-        // executing the program, and capturing output
+    /// Creates the evaluation context in a dedicated thread
+    /// Takes a setup function that will be called in the eval thread after Context is created
+    pub fn handle_launch(
+        &mut self,
+        args: LaunchRequestArguments,
+        context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
+    ) -> JsResult<()> {
+        // Store the program path for later execution
+        self.program_path = args.program.clone();
+
+        // Create the evaluation context, passing the setup function to the thread
+        let eval_context = DebugEvalContext::new(
+            context_setup,
+            self.debugger.clone(),
+            self.condvar.clone(),
+        )?;
+
+        self.eval_context = Some(eval_context);
         self.running = false;
+
+        eprintln!("[DebugSession] Evaluation context created");
         Ok(())
+    }
+
+    /// Gets the program path from the launch request
+    pub fn get_program_path(&self) -> Option<&str> {
+        self.program_path.as_deref()
+    }
+
+    /// Executes JavaScript code in the evaluation thread
+    pub fn execute(&self, source: String) -> Result<String, String> {
+        match &self.eval_context {
+            Some(ctx) => ctx.execute(source),
+            None => Err("Evaluation context not initialized. Call handle_launch first.".to_string()),
+        }
     }
 
     /// Handles the attach request
@@ -186,9 +246,7 @@ impl DebugSession {
 
     /// Handles the continue request
     pub fn handle_continue(&mut self, _args: ContinueArguments) -> JsResult<ContinueResponseBody> {
-        self.debugger.lock().unwrap().resume();
-        self.running = true;
-        self.stopped_reason = None;
+        self.resume();
 
         Ok(ContinueResponseBody {
             all_threads_continued: true,
@@ -223,17 +281,20 @@ impl DebugSession {
     pub fn handle_stack_trace(
         &mut self,
         _args: StackTraceArguments,
-        context: &Context,
     ) -> JsResult<StackTraceResponseBody> {
-        let stack = DebugApi::get_call_stack(context);
+        let frames = match &self.eval_context {
+            Some(ctx) => ctx.get_stack_trace()
+                .map_err(|e| crate::JsNativeError::error().with_message(e))?,
+            None => Vec::new(),
+        };
 
-        let stack_frames: Vec<StackFrame> = stack
+        let stack_frames: Vec<StackFrame> = frames
             .iter()
             .enumerate()
             .map(|(i, frame)| {
                 let source = Source {
-                    name: Some(frame.function_name().to_std_string_escaped()),
-                    path: Some(frame.source_path().to_string()),
+                    name: Some(frame.function_name.clone()),
+                    path: Some(frame.source_path.clone()),
                     source_reference: None,
                     presentation_hint: None,
                     origin: None,
@@ -244,14 +305,14 @@ impl DebugSession {
 
                 StackFrame {
                     id: i as i64,
-                    name: frame.function_name().to_std_string_escaped(),
+                    name: frame.function_name.clone(),
                     source: Some(source),
-                    line: frame.line_number().unwrap_or(0) as i64,
-                    column: frame.column_number().unwrap_or(0) as i64,
+                    line: frame.line_number as i64,
+                    column: frame.column_number as i64,
                     end_line: None,
                     end_column: None,
                     can_restart: false,
-                    instruction_pointer_reference: Some(format!("{}", frame.pc())),
+                    instruction_pointer_reference: Some(format!("{}", frame.pc)),
                     module_id: None,
                     presentation_hint: None,
                 }
@@ -260,7 +321,7 @@ impl DebugSession {
 
         Ok(StackTraceResponseBody {
             stack_frames,
-            total_frames: Some(stack.len() as i64),
+            total_frames: Some(frames.len() as i64),
         })
     }
 
@@ -331,9 +392,14 @@ impl DebugSession {
 
     /// Handles the evaluate request
     pub fn handle_evaluate(&mut self, args: EvaluateArguments) -> JsResult<EvaluateResponseBody> {
-        // TODO: Implement expression evaluation using DebuggerFrame::eval()
+        let result = match &self.eval_context {
+            Some(ctx) => ctx.evaluate(args.expression.clone())
+                .map_err(|e| crate::JsNativeError::error().with_message(e))?,
+            None => format!("Evaluation context not initialized: {}", args.expression),
+        };
+
         Ok(EvaluateResponseBody {
-            result: format!("Evaluation not yet implemented: {}", args.expression),
+            result,
             type_: Some("string".to_string()),
             presentation_hint: None,
             variables_reference: 0,

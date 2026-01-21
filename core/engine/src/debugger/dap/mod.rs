@@ -16,6 +16,7 @@
 //! - [DAP Specification](https://microsoft.github.io/debug-adapter-protocol/)
 //! - [VS Code Debug Extension Guide](https://code.visualstudio.com/api/extension-guides/debugger-extension)
 
+pub mod eval_context;
 pub mod messages;
 pub mod server;
 pub mod session;
