@@ -289,6 +289,27 @@ fn handle_tcp_client(
         // Parse DAP message
         match serde_json::from_slice::<ProtocolMessage>(&buffer) {
             Ok(ProtocolMessage::Request(dap_request)) => {
+                // Check if this is a terminate request - end the session
+                if dap_request.command == "terminate" {
+                    eprintln!("[BOA-DAP] Terminate request received, ending session");
+                    
+                    // Send success response
+                    let response = ProtocolMessage::Response(Response {
+                        seq: 0,
+                        request_seq: dap_request.seq,
+                        success: true,
+                        command: dap_request.command,
+                        message: None,
+                        body: None,
+                    });
+                    
+                    let mut w = writer.lock().unwrap();
+                    send_dap_message(&response, &mut *w, debug)?;
+                    
+                    // Break from the loop to end the session
+                    break;
+                }
+                
                 // Check if this is a launch request - we need to create Context here
                 let responses = if dap_request.command == "launch" {
                     handle_launch_request_with_context(
