@@ -47,6 +47,8 @@ pub(super) struct StackFrameInfo {
 pub struct DebugEvalContext {
     task_tx: mpsc::Sender<EvalTask>,
     handle: Option<thread::JoinHandle<()>>,
+    condvar: Arc<Condvar>,
+    debugger: Arc<Mutex<crate::debugger::Debugger>>,
 }
 
 /// Type for context setup function that can be sent across threads
@@ -62,11 +64,15 @@ impl DebugEvalContext {
     ) -> JsResult<Self> {
         let (task_tx, task_rx) = mpsc::channel::<EvalTask>();
 
+        // Clone Arc references for the thread
+        let debugger_clone = debugger.clone();
+        let condvar_clone = condvar.clone();
+
         let handle = thread::spawn(move || {
             // Set up debug hooks
             let hooks = std::rc::Rc::new(DebugHooks {
-                debugger: debugger.clone(),
-                condvar: condvar.clone(),
+                debugger: debugger_clone.clone(),
+                condvar: condvar_clone.clone(),
             });
 
             // Build the context with debug hooks IN THIS THREAD
@@ -85,7 +91,7 @@ impl DebugEvalContext {
             }
 
             // Attach the debugger to the context
-            if let Err(e) = debugger.lock().unwrap().attach(&mut context) {
+            if let Err(e) = debugger_clone.lock().unwrap().attach(&mut context) {
                 eprintln!("[DebugEvalContext] Failed to attach debugger: {}", e);
                 return;
             }
@@ -164,6 +170,8 @@ impl DebugEvalContext {
         Ok(Self {
             task_tx,
             handle: Some(handle),
+            condvar: condvar.clone(),
+            debugger: debugger.clone(),
         })
     }
 
@@ -223,12 +231,26 @@ impl DebugEvalContext {
 
 impl Drop for DebugEvalContext {
     fn drop(&mut self) {
+        eprintln!("[DebugEvalContext] Dropping - initiating shutdown");
+        
+        // Signal shutdown to break any wait_for_resume loops
+        {
+            let mut debugger = self.debugger.lock().unwrap();
+            debugger.shutdown();
+        }
+        
+        // Wake up any threads waiting on the condvar
+        self.condvar.notify_all();
+        
         // Send terminate signal
         let _ = self.task_tx.send(EvalTask::Terminate);
         
-        // Wait for thread to finish
+        // Wait for thread to finish with a timeout
         if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
+            match handle.join() {
+                Ok(_) => eprintln!("[DebugEvalContext] Thread joined successfully"),
+                Err(e) => eprintln!("[DebugEvalContext] Thread join failed: {:?}", e),
+            }
         }
     }
 }
@@ -248,7 +270,8 @@ impl crate::context::HostHooks for DebugHooks {
         self.debugger.lock().unwrap().pause();
 
         // Wait for resume using condition variable
-        self.wait_for_resume();
+        // Returns error if shutting down
+        self.wait_for_resume()?;
 
         Ok(())
     }
@@ -256,7 +279,8 @@ impl crate::context::HostHooks for DebugHooks {
     fn on_step(&self, _context: &mut Context) -> JsResult<()> {
         if self.debugger.lock().unwrap().is_paused() {
             eprintln!("[DebugHooks] Paused - waiting for resume...");
-            self.wait_for_resume();
+            // Returns error if shutting down
+            self.wait_for_resume()?;
         }
 
         Ok(())
@@ -264,13 +288,21 @@ impl crate::context::HostHooks for DebugHooks {
 }
 
 impl DebugHooks {
-    fn wait_for_resume(&self) {
+    fn wait_for_resume(&self) -> JsResult<()> {
         let mut debugger_guard = self.debugger.lock().unwrap();
 
-        while debugger_guard.is_paused() {
+        while debugger_guard.is_paused() && !debugger_guard.is_shutting_down() {
             debugger_guard = self.condvar.wait(debugger_guard).unwrap();
         }
 
+        if debugger_guard.is_shutting_down() {
+            eprintln!("[DebugHooks] Shutting down - aborting execution");
+            return Err(crate::JsNativeError::error()
+                .with_message("Debugger shutting down")
+                .into());
+        }
+
         eprintln!("[DebugHooks] Resumed!");
+        Ok(())
     }
 }

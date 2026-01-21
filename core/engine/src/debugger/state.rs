@@ -83,6 +83,9 @@ pub struct Debugger {
     /// Whether the debugger is attached to a context
     attached: AtomicBool,
 
+    /// Whether the debugger is shutting down
+    shutting_down: AtomicBool,
+
     /// Event hooks for debugger events
     hooks: Option<Box<dyn DebuggerHooks + 'static>>,
 }
@@ -98,6 +101,7 @@ impl Debugger {
             enabled_breakpoints: HashSet::new(),
             step_frame_depth: None,
             attached: AtomicBool::new(false),
+            shutting_down: AtomicBool::new(false),
             hooks: None,
         }
     }
@@ -144,6 +148,22 @@ impl Debugger {
     pub fn resume(&mut self) {
         self.state = DebuggerState::Running;
         self.step_frame_depth = None;
+    }
+
+    /// Signals that the debugger is shutting down
+    pub fn shutdown(&mut self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        self.state = DebuggerState::Running; // Ensure we don't stay paused
+    }
+
+    /// Checks if the debugger is shutting down
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down.load(Ordering::SeqCst)
+    }
+
+    /// Checks if the debugger is paused
+    pub fn is_paused(&self) -> bool {
+        matches!(self.state, DebuggerState::Paused)
     }
 
     /// Steps to the next instruction (step in)
@@ -230,13 +250,6 @@ impl Debugger {
             .get(&script_id)
             .map(|bps| bps.values().collect())
             .unwrap_or_default()
-    }
-
-    /// Checks if the debugger is currently paused
-    ///
-    /// Returns `true` if execution is paused and should wait for resume.
-    pub fn is_paused(&self) -> bool {
-        matches!(self.state, DebuggerState::Paused)
     }
 
     /// Checks if we should pause at the current location based on stepping state
