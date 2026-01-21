@@ -151,11 +151,13 @@ impl DebugSession {
     /// Handles the launch request
     /// Creates the evaluation context in a dedicated thread
     /// Takes a setup function that will be called in the eval thread after Context is created
+    /// If a program path is provided, automatically reads and executes it
+    /// Returns the execution result if a program was executed
     pub fn handle_launch(
         &mut self,
         args: LaunchRequestArguments,
         context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
-    ) -> JsResult<()> {
+    ) -> JsResult<Option<String>> {
         // Store the program path for later execution
         self.program_path = args.program.clone();
 
@@ -170,7 +172,32 @@ impl DebugSession {
         self.running = false;
 
         eprintln!("[DebugSession] Evaluation context created");
-        Ok(())
+
+        // If we have a program path, read and execute it immediately
+        if let Some(program_path) = &self.program_path {
+            eprintln!("[DebugSession] Executing program: {}", program_path);
+            
+            // Read the program file
+            let source = std::fs::read_to_string(program_path)
+                .map_err(|e| crate::JsNativeError::error()
+                    .with_message(format!("Failed to read program file {}: {}", program_path, e)))?;
+            
+            // Execute the program in the evaluation context
+            match self.execute(source) {
+                Ok(result) => {
+                    eprintln!("[DebugSession] Program executed successfully");
+                    return Ok(Some(result));
+                }
+                Err(e) => {
+                    eprintln!("[DebugSession] Execution error: {}", e);
+                    return Err(crate::JsNativeError::error()
+                        .with_message(format!("Execution error: {}", e))
+                        .into());
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Gets the program path from the launch request

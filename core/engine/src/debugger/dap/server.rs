@@ -205,14 +205,19 @@ impl DapServer {
         // Note: In practice, dap.rs intercepts launch and handles context creation
         // This path is just for completeness
         let setup = Box::new(|_ctx: &mut crate::Context| Ok(()));
-        self.session.lock().unwrap().handle_launch(args, setup)?;
+        let result = self.session.lock().unwrap().handle_launch(args, setup)?;
+
+        // Include execution result in response body if available
+        let body = result.map(|res| serde_json::json!({
+            "result": res
+        }));
 
         Ok(vec![self.create_response(
             request.seq,
             &request.command,
             true,
             None,
-            None,
+            body,
         )])
     }
 

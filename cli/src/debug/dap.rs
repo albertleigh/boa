@@ -404,7 +404,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
     });
 
     // Call handle_launch with the setup function - Context will be created in eval thread
-    {
+    let result = {
         let mut sess = session.lock().unwrap();
         sess.handle_launch(launch_args, context_setup)
             .map_err(|e| {
@@ -412,8 +412,13 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                     io::ErrorKind::Other,
                     format!("Failed to handle launch: {}", e),
                 )
-            })?;
-    }
+            })?
+    };
+
+    // Include execution result in response body if available
+    let body = result.map(|res| serde_json::json!({
+        "result": res
+    }));
 
     // Return success response directly (don't call dap_server.handle_request)
     let response = ProtocolMessage::Response(Response {
@@ -422,7 +427,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
         success: true,
         command: request.command,
         message: None,
-        body: None,
+        body,
     });
 
     Ok(vec![response])
