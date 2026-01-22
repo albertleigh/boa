@@ -668,6 +668,7 @@ impl Context {
 
     fn handle_error(&mut self, mut err: JsError) -> ControlFlow<CompletionRecord> {
         // Call debugger on_exception_unwind hook
+        #[cfg(feature = "debugger")]
         match self.host_hooks().on_exception_unwind(self) {
             Err(hook_err) => {
                 // If the hook itself errors, use that error instead
@@ -860,6 +861,7 @@ impl Context {
             let opcode = Opcode::decode(*byte);
 
             // Call debugger on_step hook if needed
+            #[cfg(feature = "debugger")]
             if let Err(err) = self.host_hooks().on_step(self) {
                 match self.handle_error(err) {
                     ControlFlow::Continue(()) => {}

@@ -238,6 +238,7 @@ pub trait HostHooks {
     ///
     /// The default implementation does nothing (no-op), allowing the program to continue
     /// execution as if the debugger statement wasn't there.
+    #[cfg(feature = "debugger")]
     fn on_debugger_statement(&self, _context: &mut Context) -> JsResult<()> {
         // The default implementation is a no-op
         Ok(())
@@ -260,6 +261,7 @@ pub trait HostHooks {
     /// # Returns
     ///
     /// Returns `Ok(true)` to pause execution (for debugging), `Ok(false)` to continue
+    #[cfg(feature = "debugger")]
     fn on_enter_frame(&self, _context: &mut Context) -> JsResult<bool> {
         Ok(false)
     }
@@ -281,6 +283,7 @@ pub trait HostHooks {
     /// # Returns
     ///
     /// Returns `Ok(true)` to pause execution (for debugging), `Ok(false)` to continue
+    #[cfg(feature = "debugger")]
     fn on_exit_frame(&self, _context: &mut Context) -> JsResult<bool> {
         Ok(false)
     }
@@ -302,6 +305,7 @@ pub trait HostHooks {
     /// # Returns
     ///
     /// Returns `Ok(true)` to pause execution (for debugging), `Ok(false)` to continue
+    #[cfg(feature = "debugger")]
     fn on_exception_unwind(&self, _context: &mut Context) -> JsResult<bool> {
         Ok(false)
     }
@@ -321,6 +325,7 @@ pub trait HostHooks {
     /// # Default Implementation
     ///
     /// The default implementation does nothing (no-op).
+    #[cfg(feature = "debugger")]
     fn on_step(&self, _context: &mut Context) -> JsResult<()> {
         Ok(())
     }

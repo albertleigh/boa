@@ -12,6 +12,7 @@ mod realm;
 mod shape;
 mod string;
 
+#[cfg(feature = "dap")]
 pub(crate) mod dap;
 
 fn create_boa_object(context: &mut Context) -> JsObject {

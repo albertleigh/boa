@@ -8,7 +8,6 @@ use crate::{
         OrdinaryObject,
         function::{OrdinaryFunction, ThisMode},
     },
-    debugger::ScriptId,
     object::JsObject,
 };
 use bitflags::bitflags;
@@ -22,6 +21,13 @@ use super::{
     opcode::{ByteCode, Instruction, InstructionIterator},
     source_info::{SourceInfo, SourceMap, SourcePath},
 };
+
+#[cfg(feature = "debugger")]
+use crate::debugger::ScriptId;
+
+#[cfg(not(feature = "debugger"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ScriptId(pub(crate) usize);
 
 bitflags! {
     /// Flags for [`CodeBlock`].
