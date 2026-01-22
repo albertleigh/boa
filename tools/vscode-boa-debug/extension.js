@@ -4,7 +4,7 @@
 
 const vscode = require('vscode');
 const path = require('path');
-const { spawn } = require('child_process');
+const {spawn} = require('child_process');
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -60,7 +60,7 @@ class BoaDebugAdapterDescriptorFactory {
      */
     async isPortAvailable(port) {
         const net = require('net');
-        
+
         return new Promise((resolve) => {
             const tester = net.createServer()
                 .once('error', (err) => {
@@ -94,24 +94,24 @@ class BoaDebugAdapterDescriptorFactory {
             // Try to connect to the port
             const isListening = await new Promise((resolve) => {
                 const socket = new net.Socket();
-                
+
                 socket.setTimeout(pollInterval);
-                
+
                 socket.on('connect', () => {
                     socket.destroy();
                     resolve(true);
                 });
-                
+
                 socket.on('timeout', () => {
                     socket.destroy();
                     resolve(false);
                 });
-                
+
                 socket.on('error', () => {
                     socket.destroy();
                     resolve(false);
                 });
-                
+
                 socket.connect(port, '127.0.0.1');
             });
 
@@ -164,7 +164,7 @@ class BoaDebugAdapterDescriptorFactory {
                 }
 
                 // Launch boa-cli with --dap and --dap-http-port flags
-                const serverProcess = spawn(boaCliPath, ['--dap', '--dap-http-port', httpPort.toString()], {
+                const serverProcess = spawn(boaCliPath, ['--dap', httpPort.toString()], {
                     cwd: session.workspaceFolder?.uri.fsPath || process.cwd(),
                     env: {
                         ...process.env,
@@ -182,7 +182,7 @@ class BoaDebugAdapterDescriptorFactory {
                     const checkReady = (data) => {
                         const output = data.toString();
                         console.log(`[Boa Server STDERR] ${output}`);
-                        
+
                         if (output.includes('Ready to accept connections')) {
                             serverReady = true;
                             clearTimeout(timeout);
@@ -208,7 +208,7 @@ class BoaDebugAdapterDescriptorFactory {
                 await serverReadyPromise;
                 console.log(`[Boa Debug] Server is ready!`);
             }
-            
+
             // Return a server descriptor pointing to localhost:httpPort
             const descriptor = new vscode.DebugAdapterServer(httpPort, '127.0.0.1');
             console.log(`[Boa Debug] HTTP debug adapter descriptor created for port ${httpPort}`);
@@ -217,7 +217,7 @@ class BoaDebugAdapterDescriptorFactory {
 
         // Default: stdio mode
         console.log(`[Boa Debug] Using stdio mode`);
-        
+
         // Path to the boa-cli executable
         const boaCliPath = this.findBoaCli();
 
@@ -249,24 +249,24 @@ class BoaDebugAdapterDescriptorFactory {
      */
     findBoaCli() {
         const fs = require('fs');
-        
+
         // Try to find boa-cli in the workspace (for development)
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders && workspaceFolders.length > 0) {
             const workspaceRoot = workspaceFolders[0].uri.fsPath;
-            
+
             // First, try to find the Boa repository root by looking for Cargo.toml with boa_cli
             const boaRepoRoot = this.findBoaRepositoryRoot(workspaceRoot);
-            
+
             if (boaRepoRoot) {
                 console.log(`[Boa Debug] Found Boa repository at: ${boaRepoRoot}`);
-                
+
                 // Check debug build first
                 let cliPath = path.join(boaRepoRoot, 'target', 'debug', 'boa');
                 if (process.platform === 'win32') {
                     cliPath += '.exe';
                 }
-                
+
                 console.log(`[Boa Debug] Checking: ${cliPath}`);
                 if (fs.existsSync(cliPath)) {
                     console.log(`[Boa Debug] Found boa-cli at: ${cliPath}`);
@@ -278,7 +278,7 @@ class BoaDebugAdapterDescriptorFactory {
                 if (process.platform === 'win32') {
                     cliPath += '.exe';
                 }
-                
+
                 console.log(`[Boa Debug] Checking: ${cliPath}`);
                 if (fs.existsSync(cliPath)) {
                     console.log(`[Boa Debug] Found boa-cli at: ${cliPath}`);
@@ -302,15 +302,15 @@ class BoaDebugAdapterDescriptorFactory {
     findBoaRepositoryRoot(startPath) {
         const fs = require('fs');
         let currentPath = startPath;
-        
+
         // Search up the directory tree (max 10 levels to avoid infinite loop)
         for (let i = 0; i < 10; i++) {
             // Check if this directory has the Boa markers
             const cargoTomlPath = path.join(currentPath, 'Cargo.toml');
             const cliDirPath = path.join(currentPath, 'cli');
-            
+
             console.log(`[Boa Debug] Checking for Boa repo at: ${currentPath}`);
-            
+
             if (fs.existsSync(cargoTomlPath) && fs.existsSync(cliDirPath)) {
                 // Verify it's actually the Boa repository by checking Cargo.toml content
                 try {
@@ -323,10 +323,10 @@ class BoaDebugAdapterDescriptorFactory {
                     console.log(`[Boa Debug] Error reading Cargo.toml: ${e.message}`);
                 }
             }
-            
+
             // Move up one directory
             const parentPath = path.dirname(currentPath);
-            
+
             // If we've reached the root, stop
             if (parentPath === currentPath) {
                 break;
@@ -334,7 +334,7 @@ class BoaDebugAdapterDescriptorFactory {
 
             currentPath = parentPath;
         }
-        
+
         return null;
     }
 }

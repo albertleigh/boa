@@ -21,15 +21,7 @@ use std::env;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-/// Transport mode for the DAP server
-pub enum DapTransportMode {
-    /// Standard input/output (default)
-    Stdio,
-    /// TCP server on specified port
-    Tcp(u16),
-}
-
-/// Runs the DAP server with specified transport mode
+/// Runs the DAP server on the specified TCP port
 ///
 /// This creates a debugger instance, wraps it in a DebugSession,
 /// and runs the DapServer to handle all protocol communication.
@@ -37,13 +29,8 @@ pub enum DapTransportMode {
 /// stepping, variable inspection, etc.
 ///
 /// Set BOA_DAP_DEBUG=1 environment variable to enable debug logging.
-pub fn run_dap_server_with_mode(mode: DapTransportMode) -> JsResult<()> {
-    let mode_str = match &mode {
-        DapTransportMode::Stdio => "stdio".to_string(),
-        DapTransportMode::Tcp(port) => format!("TCP on port {}", port),
-    };
-
-    eprintln!("[DAP] Starting Boa Debug Adapter ({})", mode_str);
+pub fn run_dap_server_with_mode(port: u16) -> JsResult<()> {
+    eprintln!("[DAP] Starting Boa Debug Adapter (TCP on port {})", port);
 
     // Check if debug mode is enabled via environment variable
     let debug = env::var("BOA_DAP_DEBUG")
@@ -54,40 +41,17 @@ pub fn run_dap_server_with_mode(mode: DapTransportMode) -> JsResult<()> {
         eprintln!("[DAP] Debug logging enabled");
     }
 
-    match mode {
-        DapTransportMode::Stdio => {
-            // Create the debugger instance
-            let debugger = Arc::new(Mutex::new(Debugger::new()));
-
-            // Create a debug session that manages the debugger state
-            let session = Arc::new(Mutex::new(DebugSession::new(debugger.clone())));
-
-            // Create and run the DAP server over stdio
-            let mut server = DapServer::with_debug(session, debug);
-            server
-                .run()
-                .map_err(|e| js_error!("DAP server error: {}", e))?;
-        }
-        DapTransportMode::Tcp(port) => {
-            // Run TCP server
-            run_tcp_server(port, debug).map_err(|e| js_error!("TCP server error: {}", e))?;
-        }
-    }
+    // Run TCP server
+    run_tcp_server(port, debug).map_err(|e| js_error!("TCP server error: {}", e))?;
 
     eprintln!("[DAP] Server stopped");
     Ok(())
 }
 
-/// Runs the DAP server over stdio (default mode)
-pub fn run_dap_server() -> JsResult<()> {
-    run_dap_server_with_mode(DapTransportMode::Stdio)
-}
-
 /// Runs the DAP server as a TCP server (raw socket, not HTTP)
 /// Creates a new DebugSession for each accepted connection
 fn run_tcp_server(port: u16, debug: bool) -> io::Result<()> {
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpListener;
 
     let addr = format!("127.0.0.1:{}", port);
     eprintln!("[BOA-DAP] Starting TCP server on {}", addr);

@@ -25,14 +25,6 @@ pub struct DapServer {
     print_dap_message: bool,
 }
 
-/// Transport mode for the DAP server
-pub enum TransportMode {
-    /// Standard input/output (default)
-    Stdio,
-    /// TCP server on specified port
-    Tcp(u16),
-}
-
 impl DapServer {
     /// Creates a new DAP server
     pub fn new(session: Arc<Mutex<DebugSession>>) -> Self {
@@ -54,69 +46,6 @@ impl DapServer {
         let seq = self.seq;
         self.seq += 1;
         seq
-    }
-
-    /// Runs the DAP server on stdin/stdout
-    pub fn run(&mut self) -> io::Result<()> {
-        self.run_with_transport(TransportMode::Stdio)
-    }
-
-    /// Runs the DAP server with specified transport mode
-    pub fn run_with_transport(&mut self, mode: TransportMode) -> io::Result<()> {
-        match mode {
-            TransportMode::Stdio => self.run_stdio(),
-            TransportMode::Tcp(_port) => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "TCP transport not implemented in boa_engine. Use boa_cli for HTTP support.",
-            )),
-        }
-    }
-
-    /// Runs the DAP server on stdin/stdout
-    fn run_stdio(&mut self) -> io::Result<()> {
-        let stdin = io::stdin();
-        let mut reader = BufReader::new(stdin.lock());
-        let mut stdout = io::stdout();
-
-        loop {
-            // Read the Content-Length header
-            let mut header = String::new();
-            reader.read_line(&mut header)?;
-
-            if header.trim().is_empty() {
-                continue;
-            }
-
-            let content_length: usize = header
-                .trim()
-                .strip_prefix("Content-Length: ")
-                .and_then(|s| s.parse().ok())
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Invalid Content-Length")
-                })?;
-
-            // Read the empty line
-            let mut empty = String::new();
-            reader.read_line(&mut empty)?;
-
-            // Read the message body
-            let mut buffer = vec![0u8; content_length];
-            reader.read_exact(&mut buffer)?;
-
-            // Parse the message
-            let message: ProtocolMessage = serde_json::from_slice(&buffer)
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-            // Handle the message
-            if let ProtocolMessage::Request(request) = message {
-                let mut messages = self.handle_request(request);
-
-                // Send all responses and events
-                for message in messages {
-                    self.send_message(&message, &mut stdout)?;
-                }
-            }
-        }
     }
 
     /// Handles a DAP request and returns responses/events
