@@ -86,8 +86,6 @@ fn run_tcp_server(port: u16, debug: bool) -> io::Result<()> {
             }
         }
     }
-
-    Ok(())
 }
 
 /// Custom Logger that sends console output directly as DAP output events
@@ -146,7 +144,7 @@ impl<W: Write + 'static> DapLogger<W> {
 
         // Send immediately to TCP stream
         if let Ok(mut writer) = self.writer.lock() {
-            let _ = send_message_internal(&output_message, &mut *writer, self.debug);
+            drop(send_message_internal(&output_message, &mut *writer, self.debug));
         }
     }
 }
@@ -314,7 +312,7 @@ fn handle_tcp_client(
 }
 
 /// Send a DAP protocol message
-fn send_dap_message<W: io::Write>(
+fn send_dap_message<W: Write>(
     message: &ProtocolMessage,
     writer: &mut W,
     debug: bool,
@@ -505,7 +503,7 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                                 "output": format!("Execution error: {:?}\n", e)
                             })),
                         });
-                        let _ = send_dap_message(&output_event, &mut *w, debug);
+                        drop(send_dap_message(&output_event, &mut *w, debug));
 
                         // Send terminated event
                         let terminated_event = ProtocolMessage::Event(Event {
@@ -513,7 +511,7 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                             event: "terminated".to_string(),
                             body: None,
                         });
-                        let _ = send_dap_message(&terminated_event, &mut *w, debug);
+                        drop(send_dap_message(&terminated_event, &mut *w, debug));
                     }
                 }
             }
@@ -530,7 +528,7 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                         "output": format!("Failed to read file {}: {}\n", path, e)
                     })),
                 });
-                let _ = send_dap_message(&output_event, &mut *w, debug);
+                drop(send_dap_message(&output_event, &mut *w, debug));
 
                 // Send terminated event
                 let terminated_event = ProtocolMessage::Event(Event {
@@ -538,7 +536,7 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                     event: "terminated".to_string(),
                     body: None,
                 });
-                let _ = send_dap_message(&terminated_event, &mut *w, debug);
+                drop(send_dap_message(&terminated_event, &mut *w, debug));
             }
         }
     } else {

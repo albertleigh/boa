@@ -4,10 +4,9 @@
 //! JSON-RPC communication with DAP clients (like VS Code).
 
 use super::{
-    DebugEvent, Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession,
+    Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession,
 };
 use crate::{JsError, JsNativeError};
-use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
 
 /// DAP server that handles protocol communication
@@ -487,47 +486,5 @@ impl DapServer {
             event: event.to_string(),
             body,
         })
-    }
-
-    /// Sends a protocol message
-    fn send_message<W: Write>(&self, message: &ProtocolMessage, writer: &mut W) -> io::Result<()> {
-        let json = serde_json::to_string(message)?;
-        let content_length = json.len();
-
-        write!(writer, "Content-Length: {}\r\n\r\n{}", content_length, json)?;
-        writer.flush()?;
-
-        Ok(())
-    }
-
-    /// Handles a debug event from the eval thread
-    fn handle_debug_event(&mut self, event: DebugEvent) -> ProtocolMessage {
-        match event {
-            DebugEvent::Stopped {
-                reason,
-                description,
-            } => {
-                let body = serde_json::to_value(StoppedEventBody {
-                    reason,
-                    description,
-                    thread_id: Some(1), // Boa is single-threaded
-                    preserve_focus_hint: None,
-                    text: None,
-                    all_threads_stopped: true,
-                    hit_breakpoint_ids: None,
-                })
-                .ok();
-
-                self.create_event("stopped", body)
-            }
-            DebugEvent::Terminated => {
-                // Program execution completed - tell VS Code it can disconnect
-                self.create_event("terminated", None)
-            }
-            DebugEvent::Shutdown => {
-                // Shutdown event - same as terminated
-                self.create_event("terminated", None)
-            }
-        }
     }
 }
