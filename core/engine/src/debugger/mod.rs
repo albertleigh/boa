@@ -46,14 +46,12 @@ pub mod api;
 pub mod breakpoint;
 pub mod dap;
 pub mod hooks;
-pub mod host_hooks;
 pub mod reflection;
 pub mod state;
 
 pub use api::DebugApi;
 pub use breakpoint::{Breakpoint, BreakpointId, BreakpointSite};
 pub use hooks::{DebuggerEventHandler, DebuggerHooks};
-pub use host_hooks::DebuggerHostHooks;
 pub use reflection::{DebuggerFrame, DebuggerObject, DebuggerScript};
 pub use state::{Debugger, DebuggerState, StepMode};
 
