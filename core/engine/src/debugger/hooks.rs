@@ -263,14 +263,12 @@ impl DebuggerHooks for LoggingEventHandler {
         breakpoint_id: super::BreakpointId,
     ) -> JsResult<bool> {
         let location = frame.position();
+        let line = location
+            .position
+            .map_or_else(|| "?".to_string(), |p| p.line_number().to_string());
         println!(
             "[Debugger] Breakpoint {} hit at {}:{}",
-            breakpoint_id,
-            location.path,
-            location
-                .position
-                .map(|p| p.line_number().to_string())
-                .unwrap_or_else(|| "?".to_string())
+            breakpoint_id, location.path, line
         );
         Ok(true)
     }

@@ -47,7 +47,7 @@ pub(super) enum EvalTask {
 
 /// Stack frame information
 #[derive(Debug, Clone)]
-pub(super) struct StackFrameInfo {
+pub struct StackFrameInfo {
     pub function_name: String,
     pub source_path: String,
     pub line_number: u32,

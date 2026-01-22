@@ -92,6 +92,7 @@ pub struct Debugger {
 
 impl Debugger {
     /// Creates a new debugger instance
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: DebuggerState::Running,
@@ -225,8 +226,7 @@ impl Debugger {
         self.breakpoints
             .get(&script_id)
             .and_then(|bps| bps.get(&pc))
-            .map(|bp| self.enabled_breakpoints.contains(&bp.id))
-            .unwrap_or(false)
+            .map_or(false, |bp| self.enabled_breakpoints.contains(&bp.id))
     }
 
     /// Enables a breakpoint
@@ -259,7 +259,7 @@ impl Debugger {
                 // Already paused, should continue waiting
                 true
             }
-            DebuggerState::Running => {
+            DebuggerState::Running | DebuggerState::Stepping(StepMode::None) => {
                 // Running normally
                 false
             }
@@ -270,23 +270,23 @@ impl Debugger {
             }
             DebuggerState::Stepping(StepMode::StepOver) => {
                 // Pause if we're at or above the original frame depth
-                if let Some(target_depth) = self.step_frame_depth {
-                    if frame_depth <= target_depth {
-                        self.state = DebuggerState::Paused;
-                        self.step_frame_depth = None;
-                        return true;
-                    }
+                if let Some(target_depth) = self.step_frame_depth
+                    && frame_depth <= target_depth
+                {
+                    self.state = DebuggerState::Paused;
+                    self.step_frame_depth = None;
+                    return true;
                 }
                 false
             }
             DebuggerState::Stepping(StepMode::StepOut) => {
                 // Pause if we've returned to a shallower frame
-                if let Some(target_depth) = self.step_frame_depth {
-                    if frame_depth <= target_depth {
-                        self.state = DebuggerState::Paused;
-                        self.step_frame_depth = None;
-                        return true;
-                    }
+                if let Some(target_depth) = self.step_frame_depth
+                    && frame_depth <= target_depth
+                {
+                    self.state = DebuggerState::Paused;
+                    self.step_frame_depth = None;
+                    return true;
                 }
                 false
             }
@@ -298,7 +298,6 @@ impl Debugger {
                 }
                 false
             }
-            DebuggerState::Stepping(StepMode::None) => false,
         }
     }
 

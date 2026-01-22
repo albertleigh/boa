@@ -15,7 +15,7 @@ use std::fmt;
 /// A reflection object representing a call frame in the debuggee
 ///
 /// This provides safe access to frame information without exposing
-/// the raw CallFrame structure.
+/// the raw `CallFrame` structure.
 #[derive(Debug, Clone)]
 pub struct DebuggerFrame {
     /// The function name
@@ -38,7 +38,8 @@ pub struct DebuggerFrame {
 }
 
 impl DebuggerFrame {
-    /// Creates a new DebuggerFrame from a CallFrame
+    /// Creates a new `DebuggerFrame` from a `CallFrame`
+    #[must_use]
     pub fn from_call_frame(frame: &CallFrame, depth: usize) -> Self {
         let location = frame.position();
         Self {
@@ -52,36 +53,43 @@ impl DebuggerFrame {
     }
 
     /// Gets the function name
+    #[must_use]
     pub fn function_name(&self) -> &JsString {
         &self.function_name
     }
 
     /// Gets the source file path
+    #[must_use]
     pub fn source_path(&self) -> &str {
         &self.source_path
     }
 
     /// Gets the line number (1-based) if available
+    #[must_use]
     pub fn line_number(&self) -> Option<u32> {
-        self.position.map(|p| p.line_number())
+        self.position.map(Position::line_number)
     }
 
     /// Gets the column number (1-based) if available
+    #[must_use]
     pub fn column_number(&self) -> Option<u32> {
-        self.position.map(|p| p.column_number())
+        self.position.map(Position::column_number)
     }
 
     /// Gets the program counter (bytecode offset)
+    #[must_use]
     pub fn pc(&self) -> u32 {
         self.pc
     }
 
     /// Gets the frame depth (0 = top-level, 1 = first call, etc.)
+    #[must_use]
     pub fn depth(&self) -> usize {
         self.depth
     }
 
     /// Gets the code block for this frame
+    #[must_use]
     pub fn code_block(&self) -> &Gc<CodeBlock> {
         &self.code_block
     }
@@ -133,7 +141,8 @@ pub struct DebuggerScript {
 }
 
 impl DebuggerScript {
-    /// Creates a new DebuggerScript
+    /// Creates a new `DebuggerScript`
+    #[must_use]
     pub fn new(id: super::ScriptId, path: String, name: JsString) -> Self {
         Self {
             id,
@@ -143,38 +152,45 @@ impl DebuggerScript {
         }
     }
 
-    /// Creates a DebuggerScript with source code
+    /// Creates a `DebuggerScript` with source code
+    #[must_use]
     pub fn with_source(mut self, source: String) -> Self {
         self.source = Some(source);
         self
     }
 
     /// Gets the script ID
+    #[must_use]
     pub fn id(&self) -> super::ScriptId {
         self.id
     }
 
     /// Gets the script name
+    #[must_use]
     pub fn name(&self) -> &JsString {
         &self.name
     }
 
     /// Gets the source file path
+    #[must_use]
     pub fn path(&self) -> &str {
         &self.path
     }
 
     /// Gets the source code if available
+    #[must_use]
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
 
     /// Gets the number of lines in the source code
+    #[must_use]
     pub fn line_count(&self) -> Option<usize> {
         self.source.as_ref().map(|s| s.lines().count())
     }
 
     /// Gets a specific line from the source code (0-based)
+    #[must_use]
     pub fn get_line(&self, line: usize) -> Option<&str> {
         self.source.as_ref()?.lines().nth(line)
     }
@@ -189,7 +205,7 @@ impl fmt::Display for DebuggerScript {
 /// A reflection object representing an object in the debuggee
 ///
 /// This provides safe access to object properties and methods without
-/// directly exposing the JsObject.
+/// directly exposing the `JsObject`.
 #[derive(Debug, Clone)]
 pub struct DebuggerObject {
     /// The wrapped object
@@ -200,7 +216,7 @@ pub struct DebuggerObject {
 }
 
 impl DebuggerObject {
-    /// Creates a new DebuggerObject from a JsObject
+    /// Creates a new `DebuggerObject` from a `JsObject`
     pub fn from_object(object: JsObject, context: &mut Context) -> Self {
         // Generate a preview string for the object
         let preview = Self::generate_preview(&object, context);
@@ -212,22 +228,20 @@ impl DebuggerObject {
     fn generate_preview(object: &JsObject, _context: &mut Context) -> String {
         // TODO(al): Implement better object preview generation
         // For now, just show the object type
-        format!(
-            "[object {}]",
-            object
-                .borrow()
-                .prototype()
-                .map(|p| format!("{:?}", p))
-                .unwrap_or_else(|| "null".to_string())
-        )
+        let proto = object
+            .borrow()
+            .prototype()
+            .map_or_else(|| "null".to_string(), |p| format!("{p:?}"));
+        format!("[object {proto}]")
     }
 
     /// Gets the preview string for this object
+    #[must_use]
     pub fn preview(&self) -> &str {
         &self.preview
     }
 
-    /// Gets the wrapped JsObject
+    /// Gets the wrapped `JsObject`
     ///
     /// Note: This exposes the internal object and should be used carefully
     pub fn as_js_object(&self) -> &JsObject {
