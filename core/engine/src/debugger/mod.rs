@@ -18,7 +18,7 @@
 //!
 //! The debugger uses an event-based hook system similar to SpiderMonkey:
 //!
-//! - `on_debugger_statement`: Called when `debugger;` statement is executed
+//! - `on_debugger_statement`: Called when `debugger`; statement is executed
 //! - `on_enter_frame`: Called when entering a new call frame
 //! - `on_exit_frame`: Called when exiting a call frame
 //! - `on_exception_unwind`: Called when an exception is being unwound

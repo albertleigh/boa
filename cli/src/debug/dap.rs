@@ -114,7 +114,7 @@ impl<W: Write + 'static> DapLogger<W> {
     }
 
     fn send_output(&self, msg: String, category: &str) {
-        // Create output event
+        // Create an output event
         let seq = {
             let mut counter = self.seq_counter.lock().unwrap();
             let current = *counter;
@@ -142,7 +142,7 @@ impl<W: Write + 'static> DapLogger<W> {
 
         let output_message = ProtocolMessage::Event(output_event);
 
-        // Send immediately to TCP stream
+        // Send it immediately to the TCP stream
         if let Ok(mut writer) = self.writer.lock() {
             drop(send_message_internal(&output_message, &mut *writer, self.debug));
         }
@@ -249,7 +249,7 @@ fn handle_tcp_client(
         // Parse DAP message
         match serde_json::from_slice::<ProtocolMessage>(&buffer) {
             Ok(ProtocolMessage::Request(dap_request)) => {
-                // Check if this is a terminate request - end the session
+                // Check if this is a terminated request - end the session
                 if dap_request.command == "terminate" {
                     eprintln!("[BOA-DAP] Terminate request received, ending session");
 
@@ -323,7 +323,7 @@ fn send_dap_message<W: Write>(
         eprintln!("[BOA-DAP] Response: {}", json);
     }
 
-    // Write with Content-Length header
+    // Write with a Content-Length header
     write!(writer, "Content-Length: {}\r\n\r\n{}", json.len(), json)?;
     writer.flush()?;
     Ok(())
@@ -394,7 +394,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                     ),
                 });
                 
-                // Send immediately to TCP stream
+                // Send it immediately to the TCP stream
                 if let Ok(mut w) = writer_clone.lock() {
                     if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
                         eprintln!("[BOA-DAP] Failed to send event: {}", e);
@@ -411,7 +411,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                     body: None,
                 });
                 
-                // Send immediately to TCP stream
+                // Send it immediately to the TCP stream
                 if let Ok(mut w) = writer_clone.lock() {
                     if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
                         eprintln!("[BOA-DAP] Failed to send terminated event: {}", e);
@@ -421,7 +421,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
         }
     });
 
-    // Call handle_launch - it will spawn forwarder thread and execute program
+    // Call handle_launch - it will spawn a forwarder thread and execute program
     // Forwarder thread is spawned BEFORE program execution to avoid missing events
     {
         let mut sess = session.lock().unwrap();
@@ -437,7 +437,7 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
     // No execution result to include since execution happens asynchronously
     let body = None;
 
-    // Return success response directly (don't call dap_server.handle_request)
+    // Return a success response directly (don't call dap_server.handle_request)
     let response = ProtocolMessage::Response(Response {
         seq: 0,
         request_seq: request.seq,
