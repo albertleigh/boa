@@ -14,12 +14,14 @@ pub trait Transport: Read + Write {
 }
 
 /// Standard I/O transport (stdin/stdout)
+#[derive(Debug)]
 pub struct StdioTransport {
     stdin: io::Stdin,
     stdout: io::Stdout,
 }
 
 impl StdioTransport {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             stdin: io::stdin(),

@@ -68,6 +68,18 @@ pub struct DebugEvalContext {
 /// Type for context setup function that can be sent across threads
 type ContextSetup = Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>;
 
+#[allow(clippy::missing_fields_in_debug)]
+impl std::fmt::Debug for DebugEvalContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DebugEvalContext")
+            .field("task_tx", &self.task_tx)
+            .field("handle", &self.handle.is_some())
+            .field("debugger", &"Arc<Mutex<Debugger>>")
+            .field("condvar", &"Arc<Condvar>")
+            .finish()
+    }
+}
+
 impl DebugEvalContext {
     /// Creates a new debug evaluation context
     /// Takes a setup function that will be called after Context is built in the eval thread

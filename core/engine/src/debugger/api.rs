@@ -10,7 +10,7 @@ use crate::{Context, JsResult, vm::CallFrame};
 ///
 /// This provides a centralized interface for debugger functionality
 /// that can be called from various parts of the VM.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DebugApi;
 
 impl DebugApi {

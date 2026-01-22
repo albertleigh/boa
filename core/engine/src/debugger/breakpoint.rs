@@ -89,7 +89,7 @@ impl Breakpoint {
 ///
 /// Multiple breakpoints might map to the same site (e.g., different conditions
 /// at the same location)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BreakpointSite {
     /// The script this site is in
     pub script_id: ScriptId,

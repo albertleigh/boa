@@ -8,6 +8,7 @@ use crate::{JsError, JsNativeError};
 use std::sync::{Arc, Mutex};
 
 /// DAP server that handles protocol communication
+#[derive(Debug)]
 pub struct DapServer {
     /// The debug session
     session: Arc<Mutex<DebugSession>>,

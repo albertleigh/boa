@@ -145,6 +145,7 @@ pub trait DebuggerHooks: Send {
 /// A simple event handler that can be used for basic debugging
 ///
 /// This implementation provides simple logging of debugger events.
+#[derive(Debug, Clone, Copy)]
 pub struct LoggingEventHandler {
     /// Whether to log frame entry/exit
     pub log_frames: bool,

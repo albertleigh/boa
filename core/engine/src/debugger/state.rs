@@ -90,6 +90,22 @@ pub struct Debugger {
     hooks: Option<Box<dyn DebuggerHooks + 'static>>,
 }
 
+impl std::fmt::Debug for Debugger {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Debugger")
+            .field("state", &self.state)
+            .field("breakpoints", &self.breakpoints)
+            .field("breakpoint_sites", &self.breakpoint_sites)
+            .field("next_breakpoint_id", &self.next_breakpoint_id)
+            .field("enabled_breakpoints", &self.enabled_breakpoints)
+            .field("step_frame_depth", &self.step_frame_depth)
+            .field("attached", &self.attached)
+            .field("shutting_down", &self.shutting_down)
+            .field("hooks", &self.hooks.as_ref().map(|_| "Box<dyn DebuggerHooks>"))
+            .finish()
+    }
+}
+
 impl Debugger {
     /// Creates a new debugger instance
     #[must_use]

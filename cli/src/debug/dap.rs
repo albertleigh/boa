@@ -23,13 +23,13 @@ use std::sync::{Arc, Mutex};
 
 /// Runs the DAP server on the specified TCP port
 ///
-/// This creates a debugger instance, wraps it in a DebugSession,
-/// and runs the DapServer to handle all protocol communication.
-/// The DapServer in boa_engine handles all DAP messages, breakpoints,
+/// This creates a debugger instance, wraps it in a `DebugSession`,
+/// and runs the `DapServer` to handle all protocol communication.
+/// The `DapServer` in `boa_engine` handles all DAP messages, breakpoints,
 /// stepping, variable inspection, etc.
 ///
-/// Set BOA_DAP_DEBUG=1 environment variable to enable debug logging.
-pub fn run_dap_server_with_mode(port: u16) -> JsResult<()> {
+/// Set `BOA_DAP_DEBUG=1` environment variable to enable debug logging.
+pub(crate) fn run_dap_server_with_mode(port: u16) -> JsResult<()> {
     eprintln!("[DAP] Starting Boa Debug Adapter (TCP on port {})", port);
 
     // Check if debug mode is enabled via environment variable
@@ -113,10 +113,15 @@ impl<W: Write + 'static> DapLogger<W> {
         }
     }
 
-    fn send_output(&self, msg: String, category: &str) {
+    fn send_output(&self, msg: String, category: &str) -> io::Result<()> {
         // Create an output event
         let seq = {
-            let mut counter = self.seq_counter.lock().unwrap();
+            let mut counter = self.seq_counter.lock().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("DapLogger seq_counter mutex poisoned: {}", e),
+                )
+            })?;
             let current = *counter;
             *counter += 1;
             current
@@ -136,37 +141,46 @@ impl<W: Write + 'static> DapLogger<W> {
                     column: None,
                     data: None,
                 })
-                .unwrap(),
+                .expect("Failed to serialize output event body"),
             ),
         };
 
         let output_message = ProtocolMessage::Event(output_event);
 
         // Send it immediately to the TCP stream
-        if let Ok(mut writer) = self.writer.lock() {
-            drop(send_message_internal(&output_message, &mut *writer, self.debug));
-        }
+        let mut writer = self.writer.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("DapLogger writer mutex poisoned: {}", e),
+            )
+        })?;
+        send_message_internal(&output_message, &mut *writer, self.debug)?;
+        Ok(())
     }
 }
 
 impl<W: Write + 'static> Logger for DapLogger<W> {
     fn log(&self, msg: String, _state: &ConsoleState, _context: &mut Context) -> JsResult<()> {
-        self.send_output(msg, "stdout");
+        self.send_output(msg, "stdout")
+            .map_err(|e| js_error!("Failed to send log output: {}", e))?;
         Ok(())
     }
 
     fn info(&self, msg: String, _state: &ConsoleState, _context: &mut Context) -> JsResult<()> {
-        self.send_output(msg, "stdout");
+        self.send_output(msg, "stdout")
+            .map_err(|e| js_error!("Failed to send info output: {}", e))?;
         Ok(())
     }
 
     fn warn(&self, msg: String, _state: &ConsoleState, _context: &mut Context) -> JsResult<()> {
-        self.send_output(msg, "console");
+        self.send_output(msg, "console")
+            .map_err(|e| js_error!("Failed to send warn output: {}", e))?;
         Ok(())
     }
 
     fn error(&self, msg: String, _state: &ConsoleState, _context: &mut Context) -> JsResult<()> {
-        self.send_output(msg, "stderr");
+        self.send_output(msg, "stderr")
+            .map_err(|e| js_error!("Failed to send error output: {}", e))?;
         Ok(())
     }
 }
@@ -263,7 +277,12 @@ fn handle_tcp_client(
                         body: None,
                     });
 
-                    let mut w = writer.lock().unwrap();
+                    let mut w = writer.lock().map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Writer mutex poisoned in terminate handler: {}", e),
+                        )
+                    })?;
                     send_dap_message(&response, &mut *w, debug)?;
 
                     // Break from the loop to end the session
@@ -295,7 +314,12 @@ fn handle_tcp_client(
 
                 // Send all responses
                 for response in responses {
-                    let mut w = writer.lock().unwrap();
+                    let mut w = writer.lock().map_err(|e| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Writer mutex poisoned sending responses: {}", e),
+                        )
+                    })?;
                     send_dap_message(&response, &mut *w, debug)?;
                 }
             }
@@ -373,7 +397,10 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
             DebugEvent::Shutdown => {
                 eprintln!("[BOA-DAP] Event handler received shutdown");
             }
-            DebugEvent::Stopped { reason, description } => {
+            DebugEvent::Stopped {
+                reason,
+                description,
+            } => {
                 eprintln!("[BOA-DAP] Event handler sending stopped event: {}", reason);
 
                 // Convert to DAP protocol message
@@ -390,14 +417,19 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                             all_threads_stopped: true,
                             hit_breakpoint_ids: None,
                         })
-                        .unwrap(),
+                        .expect("Failed to serialize stopped event body"),
                     ),
                 });
-                
+
                 // Send it immediately to the TCP stream
-                if let Ok(mut w) = writer_clone.lock() {
-                    if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
-                        eprintln!("[BOA-DAP] Failed to send event: {}", e);
+                match writer_clone.lock() {
+                    Ok(mut w) => {
+                        if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
+                            eprintln!("[BOA-DAP] Failed to send event: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[BOA-DAP] Writer mutex poisoned in Stopped event: {}", e);
                     }
                 }
             }
@@ -410,11 +442,16 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                     event: "terminated".to_string(),
                     body: None,
                 });
-                
+
                 // Send it immediately to the TCP stream
-                if let Ok(mut w) = writer_clone.lock() {
-                    if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
-                        eprintln!("[BOA-DAP] Failed to send terminated event: {}", e);
+                match writer_clone.lock() {
+                    Ok(mut w) => {
+                        if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
+                            eprintln!("[BOA-DAP] Failed to send terminated event: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[BOA-DAP] Writer mutex poisoned in Terminated event: {}", e);
                     }
                 }
             }
@@ -424,7 +461,12 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
     // Call handle_launch - it will spawn a forwarder thread and execute program
     // Forwarder thread is spawned BEFORE program execution to avoid missing events
     {
-        let mut sess = session.lock().unwrap();
+        let mut sess = session.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("DebugSession mutex poisoned in launch: {}", e),
+            )
+        })?;
         sess.handle_launch(launch_args, context_setup, event_handler)
             .map_err(|e| {
                 io::Error::new(
@@ -463,7 +505,12 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
 
     // Get the program path from the session
     let program_path = {
-        let sess = session.lock().unwrap();
+        let sess = session.lock().map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("DebugSession mutex poisoned getting program path: {}", e),
+            )
+        })?;
         sess.get_program_path().map(|s| s.to_string())
     };
 
@@ -474,13 +521,23 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
         match std::fs::read_to_string(&path) {
             Ok(source) => {
                 // Execute the program in the evaluation thread
-                let sess = session.lock().unwrap();
+                let sess = session.lock().map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("DebugSession mutex poisoned during execution: {}", e),
+                    )
+                })?;
                 match sess.execute(source) {
                     Ok(_result) => {
                         eprintln!("[DAP-CLI] Program executed successfully");
 
                         // Send terminated event
-                        let mut w = writer.lock().unwrap();
+                        let mut w = writer.lock().map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("Writer mutex poisoned after execution: {}", e),
+                            )
+                        })?;
                         let terminated_event = ProtocolMessage::Event(Event {
                             seq: 0,
                             event: "terminated".to_string(),
@@ -494,7 +551,12 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                         eprintln!("[DAP-CLI] Execution error: {:?}", e);
 
                         // Send output event with error
-                        let mut w = writer.lock().unwrap();
+                        let mut w = writer.lock().map_err(|e| {
+                            io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("Writer mutex poisoned sending error output: {}", e),
+                            )
+                        })?;
                         let output_event = ProtocolMessage::Event(Event {
                             seq: 0,
                             event: "output".to_string(),
@@ -519,7 +581,12 @@ fn handle_configuration_done_with_execution<W: Write + Send + 'static>(
                 eprintln!("[DAP-CLI] Failed to read file {}: {}", path, e);
 
                 // Send output event with file read error
-                let mut w = writer.lock().unwrap();
+                let mut w = writer.lock().map_err(|e| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Writer mutex poisoned sending file error: {}", e),
+                    )
+                })?;
                 let output_event = ProtocolMessage::Event(Event {
                     seq: 0,
                     event: "output".to_string(),

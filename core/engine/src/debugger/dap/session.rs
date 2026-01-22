@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A debug session manages the connection between DAP and Boa's debugger
+#[derive(Debug)]
 pub struct DebugSession {
     /// The Boa debugger instance
     debugger: Arc<Mutex<Debugger>>,

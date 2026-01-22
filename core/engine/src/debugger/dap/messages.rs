@@ -92,7 +92,7 @@ pub struct SourceBreakpoint {
     pub log_message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContinueArguments {
     pub thread_id: i64,
@@ -144,7 +144,7 @@ pub struct StackTraceArguments {
     pub format: Option<StackFrameFormat>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScopesArguments {
     pub frame_id: i64,
@@ -189,7 +189,7 @@ pub struct SourceArguments {
 // Response Bodies
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     #[serde(default)]
@@ -258,7 +258,7 @@ pub struct SetBreakpointsResponseBody {
     pub breakpoints: Vec<Breakpoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContinueResponseBody {
     #[serde(default)]
@@ -432,7 +432,7 @@ pub struct Thread {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StackFrameFormat {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,7 +451,7 @@ pub struct StackFrameFormat {
     pub include_all: Option<bool>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueFormat {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -491,7 +491,7 @@ pub struct StoppedEventBody {
     pub hit_breakpoint_ids: Option<Vec<i64>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContinuedEventBody {
     pub thread_id: i64,
@@ -532,7 +532,7 @@ pub struct TerminatedEventBody {
     pub restart: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExitedEventBody {
     pub exit_code: i64,
