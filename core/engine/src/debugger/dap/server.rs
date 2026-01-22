@@ -3,9 +3,7 @@
 //! This module implements the Debug Adapter Protocol server that handles
 //! JSON-RPC communication with DAP clients (like VS Code).
 
-use super::{
-    Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession,
-};
+use super::{Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession};
 use crate::{JsError, JsNativeError};
 use std::sync::{Arc, Mutex};
 
@@ -110,7 +108,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let capabilities = self.session.lock().unwrap().handle_initialize(args)?;
+        let capabilities = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_initialize(args)?;
         self.initialized = true;
 
         let body = serde_json::to_value(capabilities).map_err(|e| {
@@ -138,7 +142,9 @@ impl DapServer {
         let event_handler = Box::new(|_event| {}); // No-op event handler for stdio mode
         self.session
             .lock()
-            .unwrap()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
             .handle_launch(args, setup, event_handler)?;
 
         // For stdio mode in engine, we don't use events
@@ -162,7 +168,12 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        self.session.lock().unwrap().handle_attach(args)?;
+        self.session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_attach(args)?;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -195,7 +206,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_set_breakpoints(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_set_breakpoints(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -216,7 +233,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_continue(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_continue(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -238,7 +261,12 @@ impl DapServer {
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
         // TODO: Get actual frame depth from context
-        self.session.lock().unwrap().handle_next(args, 0)?;
+        self.session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_next(args, 0)?;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -255,7 +283,12 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        self.session.lock().unwrap().handle_step_in(args)?;
+        self.session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_step_in(args)?;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -273,7 +306,12 @@ impl DapServer {
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
         // TODO: Get actual frame depth from context
-        self.session.lock().unwrap().handle_step_out(args, 0)?;
+        self.session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_step_out(args, 0)?;
 
         Ok(vec![self.create_response(
             request.seq,
@@ -290,7 +328,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_stack_trace(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_stack_trace(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -311,7 +355,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_scopes(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_scopes(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -332,7 +382,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_variables(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_variables(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -353,7 +409,13 @@ impl DapServer {
         )
         .map_err(|e| JsNativeError::typ().with_message(format!("Invalid arguments: {}", e)))?;
 
-        let response_body = self.session.lock().unwrap().handle_evaluate(args)?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_evaluate(args)?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -369,7 +431,13 @@ impl DapServer {
     }
 
     fn handle_threads(&mut self, request: Request) -> Result<Vec<ProtocolMessage>, JsError> {
-        let response_body = self.session.lock().unwrap().handle_threads()?;
+        let response_body = self
+            .session
+            .lock()
+            .map_err(|e| {
+                JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+            })?
+            .handle_threads()?;
 
         let body = serde_json::to_value(response_body).map_err(|e| {
             JsNativeError::typ().with_message(format!("Failed to serialize: {}", e))
@@ -423,7 +491,9 @@ impl DapServer {
             let program_path = self
                 .session
                 .lock()
-                .unwrap()
+                .map_err(|e| {
+                    JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
+                })?
                 .get_program_path()
                 .map(|s| s.to_string());
 

@@ -93,22 +93,40 @@ impl DebugSession {
     }
 
     /// Pauses execution
-    pub fn pause(&mut self) {
-        self.debugger.lock().unwrap().pause();
+    pub fn pause(&mut self) -> JsResult<()> {
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .pause();
+        Ok(())
     }
 
     /// Resumes execution and notifies waiting threads
-    pub fn resume(&mut self) {
-        self.debugger.lock().unwrap().resume();
+    pub fn resume(&mut self) -> JsResult<()> {
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .resume();
         self.running = true;
         self.stopped_reason = None;
         // Wake up all threads waiting on the condition variable
         self.condvar.notify_all();
+        Ok(())
     }
 
     /// Checks if the debugger is paused
-    pub fn is_paused(&self) -> bool {
-        self.debugger.lock().unwrap().is_paused()
+    pub fn is_paused(&self) -> JsResult<bool> {
+        Ok(self
+            .debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .is_paused())
     }
 
     /// Handles the initialize request
@@ -216,9 +234,10 @@ impl DebugSession {
             // Execute the program asynchronously (non-blocking)
             // The eval thread will process it and can be interrupted by breakpoints
             if let Some(ctx) = &self.eval_context {
-                ctx.execute_async(program_path.clone())
-                    .map_err(|e| crate::JsNativeError::error()
-                        .with_message(format!("Failed to start execution: {}", e)))?;
+                ctx.execute_async(program_path.clone()).map_err(|e| {
+                    crate::JsNativeError::error()
+                        .with_message(format!("Failed to start execution: {}", e))
+                })?;
             }
 
             eprintln!("[DebugSession] Program execution started (non-blocking)");
@@ -275,7 +294,10 @@ impl DebugSession {
                 // TODO: Map line number to PC offset
                 // For now, we'll create a placeholder
                 let boa_bp_id = {
-                    let mut debugger = self.debugger.lock().unwrap();
+                    let mut debugger = self.debugger.lock().map_err(|e| {
+                        crate::JsNativeError::error()
+                            .with_message(format!("Debugger mutex poisoned: {e}"))
+                    })?;
                     debugger.set_breakpoint(script_id, bp.line as u32)
                 };
 
@@ -302,7 +324,7 @@ impl DebugSession {
 
     /// Handles the continue request
     pub fn handle_continue(&mut self, _args: ContinueArguments) -> JsResult<ContinueResponseBody> {
-        self.resume();
+        self.resume()?;
 
         Ok(ContinueResponseBody {
             all_threads_continued: true,
@@ -311,7 +333,12 @@ impl DebugSession {
 
     /// Handles the next (step over) request
     pub fn handle_next(&mut self, _args: NextArguments, frame_depth: usize) -> JsResult<()> {
-        self.debugger.lock().unwrap().step_over(frame_depth);
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .step_over(frame_depth);
         self.running = true;
         self.stopped_reason = None;
         Ok(())
@@ -319,7 +346,12 @@ impl DebugSession {
 
     /// Handles the step in request
     pub fn handle_step_in(&mut self, _args: StepInArguments) -> JsResult<()> {
-        self.debugger.lock().unwrap().step_in();
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .step_in();
         self.running = true;
         self.stopped_reason = None;
         Ok(())
@@ -327,7 +359,12 @@ impl DebugSession {
 
     /// Handles the step out request
     pub fn handle_step_out(&mut self, _args: StepOutArguments, frame_depth: usize) -> JsResult<()> {
-        self.debugger.lock().unwrap().step_out(frame_depth);
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .step_out(frame_depth);
         self.running = true;
         self.stopped_reason = None;
         Ok(())

@@ -119,7 +119,12 @@ impl DebugEvalContext {
             }
 
             // Attach the debugger to the context
-            if let Err(e) = debugger_clone.lock().unwrap().attach(&mut context) {
+            let attach_result = debugger_clone
+                .lock()
+                .map_err(|e| format!("Debugger mutex poisoned: {e}"))
+                .and_then(|mut dbg| dbg.attach(&mut context).map_err(|e| e.to_string()));
+
+            if let Err(e) = attach_result {
                 eprintln!("[DebugEvalContext] Failed to attach debugger: {}", e);
                 return;
             }
@@ -128,10 +133,18 @@ impl DebugEvalContext {
 
             // Process tasks
             loop {
-                let task = match task_rx.lock().unwrap().recv() {
-                    Ok(t) => t,
-                    Err(_) => break,
+                let task = match task_rx
+                    .lock()
+                    .map_err(|e| {
+                        eprintln!("[DebugEvalContext] Task receiver mutex poisoned: {}", e)
+                    })
+                    .ok()
+                    .and_then(|rx| rx.recv().ok())
+                {
+                    Some(t) => t,
+                    None => break,
                 };
+
                 match task {
                     EvalTask::Execute { source, result_tx } => {
                         let result = context.eval(Source::from_bytes(&source));
@@ -186,7 +199,9 @@ impl DebugEvalContext {
                         }
 
                         // Send terminated event to signal program completed
-                        eprintln!("[DebugEvalContext] Program execution completed, sending terminated event");
+                        eprintln!(
+                            "[DebugEvalContext] Program execution completed, sending terminated event"
+                        );
                         let _ = event_tx_for_message_loop.send(DebugEvent::Terminated);
                     }
                     EvalTask::Terminate => {
@@ -249,7 +264,12 @@ impl DebugEvalContext {
 
         // Notify condvar ONLY if debugger is paused
         // This wakes wait_for_resume to process the task immediately
-        if self.debugger.lock().unwrap().is_paused() {
+        if self
+            .debugger
+            .lock()
+            .map_err(|e| format!("Debugger mutex poisoned: {e}"))?
+            .is_paused()
+        {
             self.condvar.notify_all();
         }
 
@@ -271,7 +291,12 @@ impl DebugEvalContext {
 
         // Notify condvar ONLY if debugger is paused
         // This wakes wait_for_resume to process the task immediately
-        if self.debugger.lock().unwrap().is_paused() {
+        if self
+            .debugger
+            .lock()
+            .map_err(|e| format!("Debugger mutex poisoned: {e}"))?
+            .is_paused()
+        {
             self.condvar.notify_all();
         }
 
@@ -286,9 +311,15 @@ impl Drop for DebugEvalContext {
         eprintln!("[DebugEvalContext] Dropping - initiating shutdown");
 
         // Signal shutdown to break any wait_for_resume loops
+        // In Drop, we can't propagate errors, so we log and continue
         {
-            let mut debugger = self.debugger.lock().unwrap();
-            debugger.shutdown();
+            match self.debugger.lock() {
+                Ok(mut debugger) => debugger.shutdown(),
+                Err(e) => eprintln!(
+                    "[DebugEvalContext] Debugger mutex poisoned during drop: {}",
+                    e
+                ),
+            }
         }
 
         // Wake up any threads waiting on the condvar
@@ -324,7 +355,12 @@ impl crate::context::HostHooks for DebugHooks {
         eprintln!("[DebugHooks] Debugger statement hit at {}", frame);
 
         // Pause execution
-        self.debugger.lock().unwrap().pause();
+        self.debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .pause();
 
         // Send stopped event to DAP server
         let _ = self.event_tx.send(DebugEvent::Stopped {
@@ -341,7 +377,14 @@ impl crate::context::HostHooks for DebugHooks {
     }
 
     fn on_step(&self, context: &mut Context) -> JsResult<()> {
-        if self.debugger.lock().unwrap().is_paused() {
+        if self
+            .debugger
+            .lock()
+            .map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?
+            .is_paused()
+        {
             eprintln!("[DebugHooks] Paused - waiting for resume...");
 
             // Send stopped event to DAP server
@@ -403,8 +446,17 @@ impl DebugHooks {
             // Process any pending inspection tasks before waiting
             // Do this WITHOUT holding debugger lock to avoid contention
             loop {
-                match self.task_rx.lock().unwrap().try_recv() {
-                    Ok(task) => {
+                let try_recv_result = self
+                    .task_rx
+                    .lock()
+                    .map_err(|e| {
+                        crate::JsNativeError::error()
+                            .with_message(format!("Task receiver mutex poisoned: {e}"))
+                    })
+                    .and_then(|rx| Ok(rx.try_recv()));
+
+                match try_recv_result {
+                    Ok(Ok(task)) => {
                         // Handle non-inspection tasks specially
                         match task {
                             EvalTask::Execute { .. } | EvalTask::ExecuteNonBlocking { .. } => {
@@ -428,22 +480,28 @@ impl DebugHooks {
                             }
                         }
                     }
-                    Err(mpsc::TryRecvError::Empty) => {
+                    Ok(Err(mpsc::TryRecvError::Empty)) => {
                         // No more pending tasks - exit drain loop
                         break;
                     }
-                    Err(mpsc::TryRecvError::Disconnected) => {
+                    Ok(Err(mpsc::TryRecvError::Disconnected)) => {
                         eprintln!("[DebugHooks] Task channel disconnected");
                         return Err(crate::JsNativeError::error()
                             .with_message("Task channel closed")
                             .into());
+                    }
+                    Err(e) => {
+                        // Mutex error - convert JsNativeError to JsError
+                        return Err(e.into());
                     }
                 }
             }
 
             // NOW lock debugger once to check state and wait
             // This is the ONLY lock acquisition per loop iteration
-            let mut debugger_guard = self.debugger.lock().unwrap();
+            let mut debugger_guard = self.debugger.lock().map_err(|e| {
+                crate::JsNativeError::error().with_message(format!("Debugger mutex poisoned: {e}"))
+            })?;
 
             // Check if we should exit
             if !debugger_guard.is_paused() {
@@ -463,11 +521,14 @@ impl DebugHooks {
             // 2. notify_all() from get_stack_trace/evaluate - to process inspection tasks
             // 3. shutdown() - to terminate cleanly
             eprintln!("[DebugHooks] Waiting on condvar...");
-            debugger_guard = self.condvar.wait(debugger_guard).unwrap();
+            debugger_guard = self.condvar.wait(debugger_guard).map_err(|e| {
+                crate::JsNativeError::error()
+                    .with_message(format!("Condvar wait failed (mutex poisoned): {e}"))
+            })?;
             eprintln!("[DebugHooks] Condvar woken - checking for tasks and state");
 
-            // debugger_guard dropped here, releasing lock
-            // Loop back to: drain tasks (unlocked) → check state (locked) → wait
+            // Explicitly drop to show we're releasing the lock before next iteration
+            drop(debugger_guard);
         }
     }
 }
