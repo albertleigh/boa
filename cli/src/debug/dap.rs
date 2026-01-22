@@ -232,7 +232,7 @@ fn handle_tcp_client(
     session: Arc<Mutex<DebugSession>>,
     debug: bool,
 ) -> io::Result<()> {
-    use std::io::{BufRead, BufReader, Read, Write};
+    use std::io::{BufRead, BufReader, Read};
 
     let mut reader = BufReader::new(stream.try_clone()?);
     let writer = Arc::new(Mutex::new(stream));
@@ -436,6 +436,23 @@ fn handle_launch_request_with_context<W: Write + Send + 'static>(
                 if let Ok(mut w) = writer_clone.lock() {
                     if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
                         eprintln!("[BOA-DAP] Failed to send event: {}", e);
+                    }
+                }
+            }
+            DebugEvent::Terminated => {
+                eprintln!("[BOA-DAP] Event handler sending terminated event");
+
+                // Send terminated event - tells VS Code the debuggee has exited
+                let dap_message = ProtocolMessage::Event(Event {
+                    seq: 0,
+                    event: "terminated".to_string(),
+                    body: None,
+                });
+                
+                // Send immediately to TCP stream
+                if let Ok(mut w) = writer_clone.lock() {
+                    if let Err(e) = send_message_internal(&dap_message, &mut *w, debug) {
+                        eprintln!("[BOA-DAP] Failed to send terminated event: {}", e);
                     }
                 }
             }

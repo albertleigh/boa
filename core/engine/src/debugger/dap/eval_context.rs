@@ -16,6 +16,8 @@ pub enum DebugEvent {
         reason: String,
         description: Option<String>,
     },
+    /// Program execution completed normally
+    Terminated,
     /// Shutdown signal to terminate event forwarder thread
     Shutdown,
 }
@@ -80,6 +82,9 @@ impl DebugEvalContext {
 
         // Clone event_tx for the hooks, keep one for the struct
         let event_tx_for_hooks = event_tx.clone();
+
+        // Clone event_tx for the message loop, keep one for the struct
+        let event_tx_for_message_loop = event_tx.clone();
 
         // Clone Arc references for the thread
         let debugger_clone = debugger.clone();
@@ -179,6 +184,10 @@ impl DebugEvalContext {
                         if let Err(e) = context.run_jobs() {
                             eprintln!("[DebugEvalContext] Job execution error: {}", e);
                         }
+
+                        // Send terminated event to signal program completed
+                        eprintln!("[DebugEvalContext] Program execution completed, sending terminated event");
+                        let _ = event_tx_for_message_loop.send(DebugEvent::Terminated);
                     }
                     EvalTask::Terminate => {
                         eprintln!("[DebugEvalContext] Terminating evaluation thread");

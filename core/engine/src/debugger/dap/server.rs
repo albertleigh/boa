@@ -591,8 +591,12 @@ impl DapServer {
 
                 self.create_event("stopped", body)
             }
+            DebugEvent::Terminated => {
+                // Program execution completed - tell VS Code it can disconnect
+                self.create_event("terminated", None)
+            }
             DebugEvent::Shutdown => {
-                // Shutdown event - just create a terminated event
+                // Shutdown event - same as terminated
                 self.create_event("terminated", None)
             }
         }

@@ -3,13 +3,16 @@
 //! This module implements the debug session that connects the DAP protocol
 //! with Boa's debugger API.
 
-use super::{eval_context::{DebugEvalContext, DebugEvent}, messages::*};
+use super::{
+    eval_context::{DebugEvalContext, DebugEvent},
+    messages::*,
+};
 use crate::{
     Context, JsResult,
     debugger::{BreakpointId, Debugger, ScriptId},
 };
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// A debug session manages the connection between DAP and Boa's debugger
 pub struct DebugSession {
@@ -164,11 +167,8 @@ impl DebugSession {
         self.program_path = args.program.clone();
 
         // Create the evaluation context, passing the setup function to the thread
-        let (eval_context, event_rx) = DebugEvalContext::new(
-            context_setup,
-            self.debugger.clone(),
-            self.condvar.clone(),
-        )?;
+        let (eval_context, event_rx) =
+            DebugEvalContext::new(context_setup, self.debugger.clone(), self.condvar.clone())?;
 
         self.eval_context = Some(eval_context);
         self.running = false;
@@ -192,6 +192,10 @@ impl DebugSession {
                         eprintln!("[DebugSession] Forwarding stopped event: {}", reason);
                         event_handler(event);
                     }
+                    DebugEvent::Terminated => {
+                        eprintln!("[DebugSession] Forwarding terminated event");
+                        event_handler(event);
+                    }
                 }
             }
 
@@ -204,13 +208,11 @@ impl DebugSession {
         // If we have a program path, read and start executing it asynchronously
         // Don't wait for the result as execution may hit breakpoints
         if let Some(program_path) = &self.program_path {
-            eprintln!("[DebugSession] Starting program execution: {}", program_path);
+            eprintln!(
+                "[DebugSession] Starting program execution: {}",
+                program_path
+            );
 
-            // Read the program file
-            let source = std::fs::read_to_string(program_path)
-                .map_err(|e| crate::JsNativeError::error()
-                    .with_message(format!("Failed to read program file {}: {}", program_path, e)))?;
-            
             // Execute the program asynchronously (non-blocking)
             // The eval thread will process it and can be interrupted by breakpoints
             if let Some(ctx) = &self.eval_context {
@@ -234,7 +236,9 @@ impl DebugSession {
     pub fn execute(&self, source: String) -> Result<String, String> {
         match &self.eval_context {
             Some(ctx) => ctx.execute(source),
-            None => Err("Evaluation context not initialized. Call handle_launch first.".to_string()),
+            None => {
+                Err("Evaluation context not initialized. Call handle_launch first.".to_string())
+            }
         }
     }
 
@@ -335,7 +339,8 @@ impl DebugSession {
         _args: StackTraceArguments,
     ) -> JsResult<StackTraceResponseBody> {
         let frames = match &self.eval_context {
-            Some(ctx) => ctx.get_stack_trace()
+            Some(ctx) => ctx
+                .get_stack_trace()
                 .map_err(|e| crate::JsNativeError::error().with_message(e))?,
             None => Vec::new(),
         };
@@ -445,7 +450,8 @@ impl DebugSession {
     /// Handles the evaluate request
     pub fn handle_evaluate(&mut self, args: EvaluateArguments) -> JsResult<EvaluateResponseBody> {
         let result = match &self.eval_context {
-            Some(ctx) => ctx.evaluate(args.expression.clone())
+            Some(ctx) => ctx
+                .evaluate(args.expression.clone())
                 .map_err(|e| crate::JsNativeError::error().with_message(e))?,
             None => format!("Evaluation context not initialized: {}", args.expression),
         };
