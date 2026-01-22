@@ -33,7 +33,7 @@ pub struct DebugSession {
     /// Condition variable for pause/resume signaling
     condvar: Arc<Condvar>,
 
-    /// The evaluation context (runs in dedicated thread)
+    /// The evaluation context (runs in a dedicated thread)
     eval_context: Option<DebugEvalContext>,
 
     /// Program path from launch request
@@ -143,7 +143,7 @@ impl DebugSession {
             .is_paused())
     }
 
-    /// Handles the initialize request
+    /// Handles the initialized request
     pub fn handle_initialize(
         &mut self,
         _args: InitializeRequestArguments,
@@ -371,7 +371,7 @@ impl DebugSession {
         Ok(())
     }
 
-    /// Handles the step out request
+    /// Handles the step-out request
     pub fn handle_step_out(&mut self, _args: StepOutArguments, frame_depth: usize) -> JsResult<()> {
         self.debugger
             .lock()
