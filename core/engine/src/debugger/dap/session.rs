@@ -21,6 +21,9 @@ use crate::{
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Type alias for debug event handler callback
+type EventHandler = Box<dyn Fn(DebugEvent) + Send + 'static>;
+
 /// A debug session manages the connection between DAP and Boa's debugger
 #[derive(Debug)]
 pub struct DebugSession {
@@ -63,6 +66,7 @@ pub struct DebugSession {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum VariableReference {
     Scope {
         frame_id: i64,
@@ -74,6 +78,7 @@ enum VariableReference {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 enum ScopeType {
     Local,
     Global,
@@ -82,6 +87,7 @@ enum ScopeType {
 
 impl DebugSession {
     /// Creates a new debug session
+    #[must_use]
     pub fn new(debugger: Arc<Mutex<Debugger>>) -> Self {
         Self {
             debugger,
@@ -177,17 +183,19 @@ impl DebugSession {
         })
     }
 
-    /// Handles the launch request
-    /// Creates the evaluation context in a dedicated thread
-    /// Takes a setup function that will be called in the eval thread after Context is created
-    /// Takes an event handler that will be called for each debug event (for TCP mode)
-    /// Spawns event forwarder thread BEFORE executing program to avoid missing events
-    /// If a program path is provided, automatically reads and executes it
+    /// Handles the `launch` request.
+    ///
+    /// Creates the evaluation context in a dedicated thread.
+    /// Takes a setup function that will be called in the eval thread after `Context` is created.
+    /// Takes an event handler that will be called for each debug event (for TCP mode).
+    /// Spawns event forwarder thread BEFORE executing the program to avoid missing events.
+    /// If a program path is provided, automatically reads and executes it.
+    #[allow(clippy::type_complexity)]
     pub fn handle_launch(
         &mut self,
         args: &LaunchRequestArguments,
         context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
-        event_handler: Box<dyn Fn(DebugEvent) + Send + 'static>,
+        event_handler: EventHandler,
     ) -> JsResult<()> {
         // Store the program path for later execution
         self.program_path.clone_from(&args.program);
@@ -201,7 +209,7 @@ impl DebugSession {
 
         dbg_log!("[DebugSession] Evaluation context created");
 
-        // Spawn event forwarder thread BEFORE executing program
+        // Spawn event forwarder thread BEFORE executing the program
         // This ensures no events are missed from the first program execution
         std::thread::spawn(move || {
             dbg_log!("[DebugSession] Event forwarder thread started");
@@ -241,7 +249,7 @@ impl DebugSession {
             if let Some(ctx) = &self.eval_context {
                 ctx.execute_async(program_path.clone()).map_err(|e| {
                     crate::JsNativeError::error()
-                        .with_message(format!("Failed to start execution: {}", e))
+                        .with_message(format!("Failed to start execution: {e}"))
                 })?;
             }
 
@@ -252,6 +260,7 @@ impl DebugSession {
     }
 
     /// Gets the program path from the launch request
+    #[must_use]
     pub fn get_program_path(&self) -> Option<&str> {
         self.program_path.as_deref()
     }
@@ -266,7 +275,7 @@ impl DebugSession {
         }
     }
 
-    /// Handles the attach request
+    /// Handles the `attach` request
     pub fn handle_attach(&mut self, _args: AttachRequestArguments) -> JsResult<()> {
         // Attach will be handled by the CLI tool
         Ok(())
@@ -275,7 +284,7 @@ impl DebugSession {
     /// Handles setting breakpoints
     pub fn handle_set_breakpoints(
         &mut self,
-        args: SetBreakpointsArguments,
+        args: &SetBreakpointsArguments,
     ) -> JsResult<SetBreakpointsResponseBody> {
         let mut breakpoints = Vec::new();
 
@@ -294,7 +303,7 @@ impl DebugSession {
             .entry(source_path.clone())
             .or_insert(ScriptId(0));
 
-        if let Some(source_breakpoints) = args.breakpoints {
+        if let Some(source_breakpoints) = &args.breakpoints {
             for bp in source_breakpoints {
                 // TODO: Map line number to PC offset
                 // For now, we'll create a placeholder
@@ -327,7 +336,7 @@ impl DebugSession {
         Ok(SetBreakpointsResponseBody { breakpoints })
     }
 
-    /// Handles the continue request
+    /// Handles the `continue` request
     pub fn handle_continue(&mut self, _args: ContinueArguments) -> JsResult<ContinueResponseBody> {
         self.resume()?;
 
@@ -406,8 +415,8 @@ impl DebugSession {
                     id: i as i64,
                     name: frame.function_name.clone(),
                     source: Some(source),
-                    line: frame.line_number as i64,
-                    column: frame.column_number as i64,
+                    line: i64::from(frame.line_number),
+                    column: i64::from(frame.column_number),
                     end_line: None,
                     end_column: None,
                     can_restart: false,
@@ -490,12 +499,13 @@ impl DebugSession {
     }
 
     /// Handles the evaluate request
-    pub fn handle_evaluate(&mut self, args: EvaluateArguments) -> JsResult<EvaluateResponseBody> {
-        let result = match &self.eval_context {
-            Some(ctx) => ctx
-                .evaluate(args.expression.clone())
-                .map_err(|e| crate::JsNativeError::error().with_message(e))?,
-            None => format!("Evaluation context not initialized: {}", args.expression),
+    pub fn handle_evaluate(&mut self, args: &EvaluateArguments) -> JsResult<EvaluateResponseBody> {
+        let result = if let Some(ctx) = &self.eval_context {
+            ctx.evaluate(args.expression.clone())
+                .map_err(|e| crate::JsNativeError::error().with_message(e))?
+        } else {
+            let expression = &args.expression;
+            format!("Evaluation context not initialized: {expression}")
         };
 
         Ok(EvaluateResponseBody {
@@ -525,16 +535,19 @@ impl DebugSession {
     }
 
     /// Gets the current thread ID
+    #[must_use]
     pub fn thread_id(&self) -> i64 {
         self.thread_id
     }
 
     /// Checks if the session is running
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.running
     }
 
     /// Gets the stopped reason
+    #[must_use]
     pub fn stopped_reason(&self) -> Option<&str> {
         self.stopped_reason.as_deref()
     }

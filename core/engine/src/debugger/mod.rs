@@ -5,7 +5,7 @@
 //!
 //! # Overview
 //!
-//! The debugger API consists of several key components:
+//! The debugger API consists of several key parts:
 //!
 //! - [`Debugger`]: The main debugger interface that can be attached to a context
 //! - [`DebugApi`]: Static API for debugger operations and event notifications

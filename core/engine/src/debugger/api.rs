@@ -1,7 +1,7 @@
 //! Static API for debugger operations
 //!
 //! This module provides a static interface for debugger operations,
-//! similar to SpiderMonkey's DebugAPI.
+//! similar to SpiderMonkey's `DebugAPI`.
 
 use super::{DebuggerFrame, ScriptId};
 use crate::{Context, JsResult, vm::CallFrame};
@@ -62,7 +62,7 @@ impl DebugApi {
         Ok(false)
     }
 
-    /// Creates a DebuggerFrame from the current execution state
+    /// Creates a `DebuggerFrame` from the current execution state
     ///
     /// This is a helper for creating reflection objects.
     pub fn get_current_frame(context: &Context) -> DebuggerFrame {
@@ -71,7 +71,7 @@ impl DebugApi {
         DebuggerFrame::from_call_frame(frame, depth)
     }
 
-    /// Gets the call stack as a list of DebuggerFrames
+    /// Gets the call stack as a list of `DebuggerFrames`
     ///
     /// This is useful for showing a backtrace.
     pub fn get_call_stack(context: &Context) -> Vec<DebuggerFrame> {

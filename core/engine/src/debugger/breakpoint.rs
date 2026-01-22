@@ -22,7 +22,7 @@ pub struct Breakpoint {
     /// The script this breakpoint is in
     pub script_id: ScriptId,
 
-    /// Program counter (bytecode offset) where the breakpoint is set
+    /// The program counter (bytecode offset) where the breakpoint is set
     pub pc: u32,
 
     /// Optional condition that must evaluate to true for the breakpoint to trigger
@@ -34,12 +34,13 @@ pub struct Breakpoint {
     /// Whether this breakpoint is currently enabled
     pub enabled: bool,
 
-    /// Optional log message to print when breakpoint is hit (instead of pausing)
+    /// Optional log message to print when a breakpoint is hit (instead of pausing)
     pub log_message: Option<String>,
 }
 
 impl Breakpoint {
     /// Creates a new breakpoint
+    #[must_use]
     pub fn new(id: BreakpointId, script_id: ScriptId, pc: u32) -> Self {
         Self {
             id,
@@ -53,18 +54,21 @@ impl Breakpoint {
     }
 
     /// Creates a conditional breakpoint
+    #[must_use]
     pub fn with_condition(mut self, condition: String) -> Self {
         self.condition = Some(condition);
         self
     }
 
     /// Creates a log breakpoint (doesn't pause, just logs)
+    #[must_use]
     pub fn with_log_message(mut self, message: String) -> Self {
         self.log_message = Some(message);
         self
     }
 
     /// Increments the hit count and returns the new count
+    #[must_use]
     pub fn increment_hit_count(&mut self) -> u32 {
         self.hit_count += 1;
         self.hit_count
@@ -73,6 +77,7 @@ impl Breakpoint {
     /// Checks if the breakpoint should trigger based on its condition
     ///
     /// Returns true if there's no condition or if the condition evaluates to true
+    #[must_use]
     pub fn should_trigger(&self, _context: &crate::Context) -> bool {
         // TODO: Implement condition evaluation
         // For now, always trigger if there's no condition
@@ -80,6 +85,7 @@ impl Breakpoint {
     }
 
     /// Whether this is a log breakpoint (logs but doesn't pause)
+    #[must_use]
     pub fn is_log_breakpoint(&self) -> bool {
         self.log_message.is_some()
     }
@@ -100,6 +106,7 @@ pub struct BreakpointSite {
 
 impl BreakpointSite {
     /// Creates a new breakpoint site
+    #[must_use]
     pub fn new(script_id: ScriptId, pc: u32) -> Self {
         Self { script_id, pc }
     }
@@ -120,6 +127,7 @@ pub struct BreakpointOptions {
 
 impl BreakpointOptions {
     /// Creates new breakpoint options with default values
+    #[must_use]
     pub fn new() -> Self {
         Self {
             condition: None,
@@ -129,18 +137,21 @@ impl BreakpointOptions {
     }
 
     /// Sets a condition for the breakpoint
+    #[must_use]
     pub fn with_condition(mut self, condition: String) -> Self {
         self.condition = Some(condition);
         self
     }
 
     /// Sets a log message (makes this a logpoint)
+    #[must_use]
     pub fn with_log_message(mut self, message: String) -> Self {
         self.log_message = Some(message);
         self
     }
 
     /// Sets whether the breakpoint is enabled
+    #[must_use]
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self

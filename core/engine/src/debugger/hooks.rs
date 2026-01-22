@@ -4,6 +4,7 @@
 //! notifications about events in the VM execution.
 
 use crate::{Context, JsResult, JsValue, vm::CallFrame};
+use boa_engine::dbg_log;
 
 /// Trait for handling debugger events
 ///
@@ -69,7 +70,7 @@ pub trait DebuggerHooks: Send {
     /// # Arguments
     ///
     /// * `context` - The current execution context
-    /// * `frame` - The frame the exception is unwinding through
+    /// * `frame` - The frame through which the exception is unwinding
     /// * `exception` - The exception being thrown
     ///
     /// # Returns
@@ -138,7 +139,7 @@ pub trait DebuggerHooks: Send {
     ///
     /// Returns `Ok(true)` to pause execution, `Ok(false)` to continue
     fn on_step(&mut self, _context: &mut Context, _frame: &CallFrame, _pc: u32) -> JsResult<bool> {
-        Ok(false) // Default: don't pause on every step
+        Ok(false) // Default: don't pause at every step
     }
 }
 
@@ -159,6 +160,7 @@ pub struct LoggingEventHandler {
 
 impl LoggingEventHandler {
     /// Creates a new logging event handler with all logging enabled
+    #[must_use]
     pub fn new() -> Self {
         Self {
             log_frames: true,
@@ -168,6 +170,7 @@ impl LoggingEventHandler {
     }
 
     /// Creates a minimal logging handler that only logs essential events
+    #[must_use]
     pub fn minimal() -> Self {
         Self {
             log_frames: false,
@@ -190,13 +193,12 @@ impl DebuggerHooks for LoggingEventHandler {
         frame: &CallFrame,
     ) -> JsResult<bool> {
         let location = frame.position();
-        println!(
+        dbg_log!(
             "[Debugger] Statement hit at {}:{}",
             location.path,
             location
                 .position
-                .map(|p| p.line_number().to_string())
-                .unwrap_or_else(|| "?".to_string())
+                .map_or_else(|| "?".to_string(), |p| p.line_number().to_string())
         );
         Ok(true)
     }
@@ -204,7 +206,7 @@ impl DebuggerHooks for LoggingEventHandler {
     fn on_enter_frame(&mut self, _context: &mut Context, frame: &CallFrame) -> JsResult<bool> {
         if self.log_frames {
             let location = frame.position();
-            println!(
+            dbg_log!(
                 "[Debugger] Entering frame: {}",
                 location.function_name.to_std_string_escaped()
             );
@@ -220,7 +222,7 @@ impl DebuggerHooks for LoggingEventHandler {
     ) -> JsResult<bool> {
         if self.log_frames {
             let location = frame.position();
-            println!(
+            dbg_log!(
                 "[Debugger] Exiting frame: {}",
                 location.function_name.to_std_string_escaped()
             );
@@ -236,7 +238,7 @@ impl DebuggerHooks for LoggingEventHandler {
     ) -> JsResult<bool> {
         if self.log_exceptions {
             let location = frame.position();
-            println!(
+            dbg_log!(
                 "[Debugger] Exception in {}: {:?}",
                 location.function_name.to_std_string_escaped(),
                 exception
@@ -252,7 +254,7 @@ impl DebuggerHooks for LoggingEventHandler {
         _source: &str,
     ) -> JsResult<()> {
         if self.log_scripts {
-            println!("[Debugger] New script compiled: {:?}", script_id);
+            dbg_log!("[Debugger] New script compiled: {script_id:?}");
         }
         Ok(())
     }
@@ -267,10 +269,8 @@ impl DebuggerHooks for LoggingEventHandler {
         let line = location
             .position
             .map_or_else(|| "?".to_string(), |p| p.line_number().to_string());
-        println!(
-            "[Debugger] Breakpoint {} hit at {}:{}",
-            breakpoint_id, location.path, line
-        );
+        let path = &location.path;
+        dbg_log!("[Debugger] Breakpoint {breakpoint_id} hit at {path}:{line}");
         Ok(true)
     }
 }
