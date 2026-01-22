@@ -4,7 +4,7 @@
 //! JSON-RPC communication with DAP clients (like VS Code).
 
 use super::{Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession};
-use crate::{JsError, JsNativeError};
+use crate::{JsError, JsNativeError, dbg_log};
 use std::sync::{Arc, Mutex};
 
 /// DAP server that handles protocol communication
@@ -18,24 +18,15 @@ pub struct DapServer {
 
     /// Whether the server has been initialized
     initialized: bool,
-
-    /// Whether to print debug messages
-    print_dap_message: bool,
 }
 
 impl DapServer {
     /// Creates a new DAP server
     pub fn new(session: Arc<Mutex<DebugSession>>) -> Self {
-        Self::with_debug(session, false)
-    }
-
-    /// Creates a new DAP server with debug flag
-    pub fn with_debug(session: Arc<Mutex<DebugSession>>, print_dap_message: bool) -> Self {
         Self {
             session,
             seq: 1,
             initialized: false,
-            print_dap_message,
         }
     }
 
@@ -51,13 +42,11 @@ impl DapServer {
         let command = request.command.clone();
         let request_seq = request.seq;
 
-        if self.print_dap_message {
-            eprintln!(
-                "[BOA-DAP-DEBUG] Received request: {}",
-                serde_json::to_string(&request)
-                    .unwrap_or_else(|_| format!("{{\"command\":\"{}\"}}", command))
-            );
-        }
+        dbg_log!(
+            "[BOA-DAP-DEBUG] Received request: {}",
+            serde_json::to_string(&request)
+                .unwrap_or_else(|_| format!("{{\"command\":\"{}\"}}", command))
+        );
 
         let result = match command.as_str() {
             "initialize" => self.handle_initialize(request),
@@ -146,7 +135,7 @@ impl DapServer {
             .map_err(|e| {
                 JsNativeError::error().with_message(format!("DebugSession mutex poisoned: {e}"))
             })?
-            .handle_launch(args, setup, event_handler)?;
+            .handle_launch(&args, setup, event_handler)?;
 
         // For stdio mode in engine, we don't use events
         // TCP mode (in CLI) provides actual event handler

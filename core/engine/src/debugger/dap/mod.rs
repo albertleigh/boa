@@ -20,7 +20,6 @@ pub mod eval_context;
 pub mod messages;
 pub mod server;
 pub mod session;
-pub mod transport;
 
 pub use messages::*;
 pub use server::DapServer;

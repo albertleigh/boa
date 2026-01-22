@@ -3,7 +3,7 @@
 //! This module provides a dedicated thread for JavaScript evaluation with the Context.
 //! Similar to the actor model, this ensures Context never needs to be Send/Sync.
 
-use crate::{Context, JsResult, Source, context::ContextBuilder};
+use crate::{Context, JsResult, Source, context::ContextBuilder, dbg_log};
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
@@ -119,14 +119,14 @@ impl DebugEvalContext {
             let mut context = match ContextBuilder::new().host_hooks(hooks).build() {
                 Ok(ctx) => ctx,
                 Err(e) => {
-                    eprintln!("[DebugEvalContext] Failed to build context: {}", e);
+                    dbg_log!("[DebugEvalContext] Failed to build context: {e}");
                     return;
                 }
             };
 
             // Call the setup function to register console and other runtimes
             if let Err(e) = context_setup(&mut context) {
-                eprintln!("[DebugEvalContext] Context setup failed: {}", e);
+                dbg_log!("[DebugEvalContext] Context setup failed: {e}");
                 return;
             }
 
@@ -137,18 +137,18 @@ impl DebugEvalContext {
                 .and_then(|mut dbg| dbg.attach(&mut context).map_err(|e| e.to_string()));
 
             if let Err(e) = attach_result {
-                eprintln!("[DebugEvalContext] Failed to attach debugger: {}", e);
+                dbg_log!("[DebugEvalContext] Failed to attach debugger: {e}");
                 return;
             }
 
-            eprintln!("[DebugEvalContext] Context created and debugger attached");
+            dbg_log!("[DebugEvalContext] Context created and debugger attached");
 
             // Process tasks
             loop {
                 let task = match task_rx
                     .lock()
                     .map_err(|e| {
-                        eprintln!("[DebugEvalContext] Task receiver mutex poisoned: {}", e)
+                        dbg_log!("[DebugEvalContext] Task receiver mutex poisoned: {e}")
                     })
                     .ok()
                     .and_then(|rx| rx.recv().ok())
@@ -171,9 +171,8 @@ impl DebugEvalContext {
                         let _ = result_tx.send(send_result);
                     }
                     EvalTask::ExecuteNonBlocking { file_path } => {
-                        eprintln!(
-                            "[DebugEvalContext] Starting non-blocking execution of {}",
-                            file_path
+                        dbg_log!(
+                            "[DebugEvalContext] Starting non-blocking execution of {file_path}"
                         );
 
                         // Convert string to Path and create Source from file
@@ -181,7 +180,7 @@ impl DebugEvalContext {
                         let source = match Source::from_filepath(path) {
                             Ok(src) => src,
                             Err(e) => {
-                                eprintln!("[DebugEvalContext] Failed to load file: {}", e);
+                                dbg_log!("[DebugEvalContext] Failed to load file: {e}");
                                 continue;
                             }
                         };
@@ -192,32 +191,32 @@ impl DebugEvalContext {
                         match result {
                             Ok(v) => {
                                 if !v.is_undefined() {
-                                    eprintln!(
-                                        "[DebugEvalContext] Execution completed with result: {}",
-                                        v.display()
+                                    let display = v.display();
+                                    dbg_log!(
+                                        "[DebugEvalContext] Execution completed with result: {display}"
                                     );
                                 } else {
-                                    eprintln!("[DebugEvalContext] Execution completed");
+                                    dbg_log!("[DebugEvalContext] Execution completed");
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[DebugEvalContext] Execution error: {}", e);
+                                dbg_log!("[DebugEvalContext] Execution error: {e}");
                             }
                         }
 
                         // Run any pending jobs (promises, etc.)
                         if let Err(e) = context.run_jobs() {
-                            eprintln!("[DebugEvalContext] Job execution error: {}", e);
+                            dbg_log!("[DebugEvalContext] Job execution error: {e}");
                         }
 
                         // Send terminated event to signal program completed
-                        eprintln!(
+                        dbg_log!(
                             "[DebugEvalContext] Program execution completed, sending terminated event"
                         );
                         let _ = event_tx_for_message_loop.send(DebugEvent::Terminated);
                     }
                     EvalTask::Terminate => {
-                        eprintln!("[DebugEvalContext] Terminating evaluation thread");
+                        dbg_log!("[DebugEvalContext] Terminating evaluation thread");
                         break;
                     }
                     // Handle inspection tasks using common helper
@@ -320,16 +319,15 @@ impl DebugEvalContext {
 
 impl Drop for DebugEvalContext {
     fn drop(&mut self) {
-        eprintln!("[DebugEvalContext] Dropping - initiating shutdown");
+        dbg_log!("[DebugEvalContext] Dropping - initiating shutdown");
 
         // Signal shutdown to break any wait_for_resume loops
         // In Drop, we can't propagate errors, so we log and continue
         {
             match self.debugger.lock() {
                 Ok(mut debugger) => debugger.shutdown(),
-                Err(e) => eprintln!(
-                    "[DebugEvalContext] Debugger mutex poisoned during drop: {}",
-                    e
+                Err(e) => dbg_log!(
+                    "[DebugEvalContext] Debugger mutex poisoned during drop: {e}"
                 ),
             }
         }
@@ -346,8 +344,8 @@ impl Drop for DebugEvalContext {
         // Wait for thread to finish with a timeout
         if let Some(handle) = self.handle.take() {
             match handle.join() {
-                Ok(_) => eprintln!("[DebugEvalContext] Thread joined successfully"),
-                Err(e) => eprintln!("[DebugEvalContext] Thread join failed: {:?}", e),
+                Ok(_) => dbg_log!("[DebugEvalContext] Thread joined successfully"),
+                Err(e) => dbg_log!("[DebugEvalContext] Thread join failed: {e:?}"),
             }
         }
     }
@@ -364,7 +362,7 @@ struct DebugHooks {
 impl crate::context::HostHooks for DebugHooks {
     fn on_debugger_statement(&self, context: &mut Context) -> JsResult<()> {
         let frame = crate::debugger::DebugApi::get_current_frame(context);
-        eprintln!("[DebugHooks] Debugger statement hit at {}", frame);
+        dbg_log!("[DebugHooks] Debugger statement hit at {frame}");
 
         // Pause execution
         self.debugger
@@ -397,7 +395,7 @@ impl crate::context::HostHooks for DebugHooks {
             })?
             .is_paused()
         {
-            eprintln!("[DebugHooks] Paused - waiting for resume...");
+            dbg_log!("[DebugHooks] Paused - waiting for resume...");
 
             // Send stopped event to DAP server
             let _ = self.event_tx.send(DebugEvent::Stopped {
@@ -452,7 +450,7 @@ impl DebugHooks {
     /// Wait for resume while continuing to process inspection tasks
     /// This prevents deadlock when DAP client requests stackTrace/evaluate while paused
     fn wait_for_resume(&self, context: &mut Context) -> JsResult<()> {
-        eprintln!("[DebugHooks] Entering wait_for_resume - will process tasks while waiting");
+        dbg_log!("[DebugHooks] Entering wait_for_resume - will process tasks while waiting");
 
         loop {
             // Process any pending inspection tasks before waiting
@@ -472,12 +470,12 @@ impl DebugHooks {
                         // Handle non-inspection tasks specially
                         match task {
                             EvalTask::Execute { .. } | EvalTask::ExecuteNonBlocking { .. } => {
-                                eprintln!(
+                                dbg_log!(
                                     "[DebugHooks] Dropping execution task received while paused"
                                 );
                             }
                             EvalTask::Terminate => {
-                                eprintln!("[DebugHooks] Terminate signal received while paused");
+                                dbg_log!("[DebugHooks] Terminate signal received while paused");
                                 return Err(crate::JsNativeError::error()
                                     .with_message("Eval thread terminating")
                                     .into());
@@ -485,7 +483,7 @@ impl DebugHooks {
                             // Process inspection tasks
                             other => {
                                 if Self::process_inspection_task(other, context) {
-                                    eprintln!(
+                                    dbg_log!(
                                         "[DebugHooks] Processed inspection task while paused"
                                     );
                                 }
@@ -497,7 +495,7 @@ impl DebugHooks {
                         break;
                     }
                     Ok(Err(mpsc::TryRecvError::Disconnected)) => {
-                        eprintln!("[DebugHooks] Task channel disconnected");
+                        dbg_log!("[DebugHooks] Task channel disconnected");
                         return Err(crate::JsNativeError::error()
                             .with_message("Task channel closed")
                             .into());
@@ -517,11 +515,11 @@ impl DebugHooks {
 
             // Check if we should exit
             if !debugger_guard.is_paused() {
-                eprintln!("[DebugHooks] Resumed!");
+                dbg_log!("[DebugHooks] Resumed!");
                 return Ok(());
             }
             if debugger_guard.is_shutting_down() {
-                eprintln!("[DebugHooks] Shutting down - aborting execution");
+                dbg_log!("[DebugHooks] Shutting down - aborting execution");
                 return Err(crate::JsNativeError::error()
                     .with_message("Debugger shutting down")
                     .into());
@@ -532,12 +530,12 @@ impl DebugHooks {
             // 1. resume() - to continue execution
             // 2. notify_all() from get_stack_trace/evaluate - to process inspection tasks
             // 3. shutdown() - to terminate cleanly
-            eprintln!("[DebugHooks] Waiting on condvar...");
+            dbg_log!("[DebugHooks] Waiting on condvar...");
             debugger_guard = self.condvar.wait(debugger_guard).map_err(|e| {
                 crate::JsNativeError::error()
                     .with_message(format!("Condvar wait failed (mutex poisoned): {e}"))
             })?;
-            eprintln!("[DebugHooks] Condvar woken - checking for tasks and state");
+            dbg_log!("[DebugHooks] Condvar woken - checking for tasks and state");
 
             // Explicitly drop to show we're releasing the lock before next iteration
             drop(debugger_guard);

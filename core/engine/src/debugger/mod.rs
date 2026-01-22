@@ -23,24 +23,6 @@
 //! - `on_exit_frame`: Called when exiting a call frame
 //! - `on_exception_unwind`: Called when an exception is being unwound
 //! - `on_new_script`: Called when a new script/function is compiled
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use boa_engine::{Context, debugger::Debugger};
-//!
-//! let mut context = Context::default();
-//! let mut debugger = Debugger::new();
-//!
-//! // Attach the debugger to the context
-//! debugger.attach(&mut context);
-//!
-//! // Set a breakpoint
-//! debugger.set_breakpoint("script.js", 10);
-//!
-//! // Execute code - debugger will pause at breakpoints
-//! context.eval(Source::from_bytes("debugger; console.log('test');"));
-//! ```
 
 pub mod api;
 pub mod breakpoint;
@@ -67,3 +49,29 @@ pub struct ScriptId(pub(crate) usize);
 /// Unique identifier for a call frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FrameId(pub(crate) usize);
+
+use std::sync::OnceLock;
+
+/// Static flag to check if debugger logging is enabled
+static DEBUGGER_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
+
+/// Checks if debugger logging is enabled via `BOA_DAP_DEBUG` environment variable
+#[must_use]
+pub fn is_debugger_log_enabled() -> bool {
+    *DEBUGGER_LOG_ENABLED.get_or_init(|| {
+        std::env::var("BOA_DAP_DEBUG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+/// Macro for conditional debug logging in debugger modules
+/// Only prints when `BOA_DAP_DEBUG` environment variable is set to "1" or "true"
+#[macro_export]
+macro_rules! dbg_log {
+    ($($arg:tt)*) => {
+        if $crate::debugger::is_debugger_log_enabled() {
+            println!($($arg)*);
+        }
+    };
+}

@@ -5,10 +5,17 @@
 
 use super::{
     eval_context::{DebugEvalContext, DebugEvent},
-    messages::*,
+    messages::{
+        AttachRequestArguments, Breakpoint, Capabilities, ContinueArguments, ContinueResponseBody,
+        EvaluateArguments, EvaluateResponseBody, InitializeRequestArguments,
+        LaunchRequestArguments, NextArguments, Scope, ScopesArguments, ScopesResponseBody,
+        SetBreakpointsArguments, SetBreakpointsResponseBody, Source, StackFrame,
+        StackTraceArguments, StackTraceResponseBody, StepInArguments, StepOutArguments, Thread,
+        ThreadsResponseBody, VariablesArguments, VariablesResponseBody,
+    },
 };
 use crate::{
-    Context, JsResult,
+    Context, JsResult, dbg_log,
     debugger::{BreakpointId, Debugger, ScriptId},
 };
 use std::collections::HashMap;
@@ -178,12 +185,12 @@ impl DebugSession {
     /// If a program path is provided, automatically reads and executes it
     pub fn handle_launch(
         &mut self,
-        args: LaunchRequestArguments,
+        args: &LaunchRequestArguments,
         context_setup: Box<dyn FnOnce(&mut Context) -> JsResult<()> + Send>,
         event_handler: Box<dyn Fn(DebugEvent) + Send + 'static>,
     ) -> JsResult<()> {
         // Store the program path for later execution
-        self.program_path = args.program.clone();
+        self.program_path.clone_from(&args.program);
 
         // Create the evaluation context, passing the setup function to the thread
         let (eval_context, event_rx) =
@@ -192,45 +199,42 @@ impl DebugSession {
         self.eval_context = Some(eval_context);
         self.running = false;
 
-        eprintln!("[DebugSession] Evaluation context created");
+        dbg_log!("[DebugSession] Evaluation context created");
 
         // Spawn event forwarder thread BEFORE executing program
         // This ensures no events are missed from the first program execution
         std::thread::spawn(move || {
-            eprintln!("[DebugSession] Event forwarder thread started");
+            dbg_log!("[DebugSession] Event forwarder thread started");
 
             // Block on receiver - clean, no polling, no locks
             while let Ok(event) = event_rx.recv() {
                 match &event {
                     DebugEvent::Shutdown => {
-                        eprintln!("[DebugSession] Shutdown signal received");
+                        dbg_log!("[DebugSession] Shutdown signal received");
                         event_handler(event);
                         break;
                     }
                     DebugEvent::Stopped { reason, .. } => {
-                        eprintln!("[DebugSession] Forwarding stopped event: {}", reason);
+                        dbg_log!("[DebugSession] Forwarding stopped event: {reason}");
                         event_handler(event);
                     }
                     DebugEvent::Terminated => {
-                        eprintln!("[DebugSession] Forwarding terminated event");
+                        dbg_log!("[DebugSession] Forwarding terminated event");
                         event_handler(event);
                     }
                 }
             }
 
-            eprintln!("[DebugSession] Event forwarder thread terminated cleanly");
+            dbg_log!("[DebugSession] Event forwarder thread terminated cleanly");
         });
 
-        eprintln!("[DebugSession] Event forwarder thread spawned");
+        dbg_log!("[DebugSession] Event forwarder thread spawned");
 
         // NOW execute the program after forwarder is ready
         // If we have a program path, read and start executing it asynchronously
         // Don't wait for the result as execution may hit breakpoints
         if let Some(program_path) = &self.program_path {
-            eprintln!(
-                "[DebugSession] Starting program execution: {}",
-                program_path
-            );
+            dbg_log!("[DebugSession] Starting program execution: {program_path}");
 
             // Execute the program asynchronously (non-blocking)
             // The eval thread will process it and can be interrupted by breakpoints
@@ -241,7 +245,7 @@ impl DebugSession {
                 })?;
             }
 
-            eprintln!("[DebugSession] Program execution started (non-blocking)");
+            dbg_log!("[DebugSession] Program execution started (non-blocking)");
         }
 
         Ok(())
