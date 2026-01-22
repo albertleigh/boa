@@ -3,7 +3,9 @@
 //! This module implements the Debug Adapter Protocol server that handles
 //! JSON-RPC communication with DAP clients (like VS Code).
 
-use super::{Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession, DebugEvent};
+use super::{
+    DebugEvent, Event, ProtocolMessage, Request, Response, messages::*, session::DebugSession,
+};
 use crate::{JsError, JsNativeError};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::{Arc, Mutex};
@@ -206,8 +208,11 @@ impl DapServer {
         // This path is just for completeness
         let setup = Box::new(|_ctx: &mut crate::Context| Ok(()));
         let event_handler = Box::new(|_event| {}); // No-op event handler for stdio mode
-        self.session.lock().unwrap().handle_launch(args, setup, event_handler)?;
-        
+        self.session
+            .lock()
+            .unwrap()
+            .handle_launch(args, setup, event_handler)?;
+
         // For stdio mode in engine, we don't use events
         // TCP mode (in CLI) provides actual event handler
 
@@ -478,13 +483,21 @@ impl DapServer {
                 Ok(content) => content,
                 Err(e) => {
                     return Err(JsNativeError::typ()
-                        .with_message(format!("Failed to read source file: {}", e))
+                        .with_message(format!(
+                            "Failed to read source file {}: {}",
+                            &source_path, e
+                        ))
                         .into());
                 }
             }
         } else {
             // No path provided, check if we have a program path from launch
-            let program_path = self.session.lock().unwrap().get_program_path().map(|s| s.to_string());
+            let program_path = self
+                .session
+                .lock()
+                .unwrap()
+                .get_program_path()
+                .map(|s| s.to_string());
 
             if let Some(path) = program_path {
                 match std::fs::read_to_string(&path) {
@@ -561,7 +574,10 @@ impl DapServer {
     /// Handles a debug event from the eval thread
     fn handle_debug_event(&mut self, event: DebugEvent) -> ProtocolMessage {
         match event {
-            DebugEvent::Stopped { reason, description } => {
+            DebugEvent::Stopped {
+                reason,
+                description,
+            } => {
                 let body = serde_json::to_value(StoppedEventBody {
                     reason,
                     description,
@@ -572,7 +588,7 @@ impl DapServer {
                     hit_breakpoint_ids: None,
                 })
                 .ok();
-                
+
                 self.create_event("stopped", body)
             }
             DebugEvent::Shutdown => {

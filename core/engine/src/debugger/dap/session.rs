@@ -214,7 +214,7 @@ impl DebugSession {
             // Execute the program asynchronously (non-blocking)
             // The eval thread will process it and can be interrupted by breakpoints
             if let Some(ctx) = &self.eval_context {
-                ctx.execute_async(source, Some(program_path.clone()))
+                ctx.execute_async(program_path.clone())
                     .map_err(|e| crate::JsNativeError::error()
                         .with_message(format!("Failed to start execution: {}", e)))?;
             }

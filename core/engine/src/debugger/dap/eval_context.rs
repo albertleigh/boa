@@ -4,7 +4,8 @@
 //! Similar to the actor model, this ensures Context never needs to be Send/Sync.
 
 use crate::{Context, JsResult, Source, context::ContextBuilder};
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::path::Path;
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 
 /// Event that can be sent from eval thread to DAP server
@@ -28,10 +29,7 @@ pub(super) enum EvalTask {
     },
     /// Execute JavaScript code non-blocking (doesn't wait for result)
     /// Used for program execution that may hit breakpoints
-    ExecuteNonBlocking {
-        source: String,
-        file_path: Option<String>,
-    },
+    ExecuteNonBlocking { file_path: String },
     /// Get stack trace
     GetStackTrace {
         result_tx: mpsc::Sender<Result<Vec<StackFrameInfo>, String>>,
@@ -134,28 +132,40 @@ impl DebugEvalContext {
                         let result = context.eval(Source::from_bytes(&source));
                         // Convert JsResult<JsValue> to Result<String, String> for sending
                         let send_result = match result {
-                            Ok(v) => {
-                                match v.to_string(&mut context) {
-                                    Ok(js_str) => Ok(js_str.to_std_string_escaped()),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            }
+                            Ok(v) => match v.to_string(&mut context) {
+                                Ok(js_str) => Ok(js_str.to_std_string_escaped()),
+                                Err(e) => Err(e.to_string()),
+                            },
                             Err(e) => Err(e.to_string()),
                         };
                         let _ = result_tx.send(send_result);
                     }
-                    EvalTask::ExecuteNonBlocking { source, file_path } => {
-                        eprintln!("[DebugEvalContext] Starting non-blocking execution{}",
-                            file_path.as_ref().map(|p| format!(" of {}", p)).unwrap_or_default());
+                    EvalTask::ExecuteNonBlocking { file_path } => {
+                        eprintln!(
+                            "[DebugEvalContext] Starting non-blocking execution of {}",
+                            file_path
+                        );
 
-                        // Execute without blocking - the eval thread continues to process other tasks
-                        let result = context.eval(Source::from_bytes(&source));
+                        // Convert string to Path and create Source from file
+                        let path = Path::new(&file_path);
+                        let source = match Source::from_filepath(path) {
+                            Ok(src) => src,
+                            Err(e) => {
+                                eprintln!("[DebugEvalContext] Failed to load file: {}", e);
+                                continue;
+                            }
+                        };
+
+                        // Execute the source
+                        let result = context.eval(source);
 
                         match result {
                             Ok(v) => {
                                 if !v.is_undefined() {
-                                    eprintln!("[DebugEvalContext] Execution completed with result: {}",
-                                        v.display());
+                                    eprintln!(
+                                        "[DebugEvalContext] Execution completed with result: {}",
+                                        v.display()
+                                    );
                                 } else {
                                     eprintln!("[DebugEvalContext] Execution completed");
                                 }
@@ -189,7 +199,7 @@ impl DebugEvalContext {
             debugger: debugger.clone(),
             event_tx,
         };
-        
+
         Ok((ctx, event_rx))
     }
 
@@ -198,7 +208,7 @@ impl DebugEvalContext {
     /// that may hit breakpoints. Use execute_async instead.
     pub fn execute(&self, source: String) -> Result<String, String> {
         let (result_tx, result_rx) = mpsc::channel();
-        
+
         self.task_tx
             .send(EvalTask::Execute { source, result_tx })
             .map_err(|e| format!("Failed to send task: {}", e))?;
@@ -212,11 +222,11 @@ impl DebugEvalContext {
     /// Executes JavaScript code asynchronously without blocking
     /// The execution happens in the eval thread and this method returns immediately
     /// Use this for program execution that may hit breakpoints
-    pub fn execute_async(&self, source: String, file_path: Option<String>) -> Result<(), String> {
+    pub fn execute_async(&self, file_path: String) -> Result<(), String> {
         self.task_tx
-            .send(EvalTask::ExecuteNonBlocking { source, file_path })
+            .send(EvalTask::ExecuteNonBlocking { file_path })
             .map_err(|e| format!("Failed to send task: {}", e))?;
-        
+
         Ok(())
     }
 
@@ -233,7 +243,7 @@ impl DebugEvalContext {
         if self.debugger.lock().unwrap().is_paused() {
             self.condvar.notify_all();
         }
-        
+
         result_rx
             .recv()
             .map_err(|e| format!("Failed to receive result: {}", e))?
@@ -242,17 +252,20 @@ impl DebugEvalContext {
     /// Evaluates an expression in the current frame
     pub fn evaluate(&self, expression: String) -> Result<String, String> {
         let (result_tx, result_rx) = mpsc::channel();
-        
+
         self.task_tx
-            .send(EvalTask::Evaluate { expression, result_tx })
+            .send(EvalTask::Evaluate {
+                expression,
+                result_tx,
+            })
             .map_err(|e| format!("Failed to send task: {}", e))?;
-        
+
         // Notify condvar ONLY if debugger is paused
         // This wakes wait_for_resume to process the task immediately
         if self.debugger.lock().unwrap().is_paused() {
             self.condvar.notify_all();
         }
-        
+
         result_rx
             .recv()
             .map_err(|e| format!("Failed to receive result: {}", e))?
@@ -268,13 +281,13 @@ impl Drop for DebugEvalContext {
             let mut debugger = self.debugger.lock().unwrap();
             debugger.shutdown();
         }
-        
+
         // Wake up any threads waiting on the condvar
         self.condvar.notify_all();
-        
+
         // Send shutdown event to terminate any event forwarder threads
         let _ = self.event_tx.send(DebugEvent::Shutdown);
-        
+
         // Send terminate signal to eval thread
         let _ = self.task_tx.send(EvalTask::Terminate);
 
@@ -321,13 +334,13 @@ impl crate::context::HostHooks for DebugHooks {
     fn on_step(&self, context: &mut Context) -> JsResult<()> {
         if self.debugger.lock().unwrap().is_paused() {
             eprintln!("[DebugHooks] Paused - waiting for resume...");
-            
+
             // Send stopped event to DAP server
             let _ = self.event_tx.send(DebugEvent::Stopped {
                 reason: "step".to_string(),
                 description: Some("Paused on step".to_string()),
             });
-            
+
             // Returns error if shutting down
             // Passes context to allow processing inspection tasks while paused
             self.wait_for_resume(context)?;
@@ -357,9 +370,15 @@ impl DebugHooks {
                 let _ = result_tx.send(Ok(frames));
                 true
             }
-            EvalTask::Evaluate { expression, result_tx } => {
+            EvalTask::Evaluate {
+                expression,
+                result_tx,
+            } => {
                 // TODO: Implement proper frame evaluation
-                let _ = result_tx.send(Ok(format!("Evaluation not yet implemented: {}", expression)));
+                let _ = result_tx.send(Ok(format!(
+                    "Evaluation not yet implemented: {}",
+                    expression
+                )));
                 true
             }
             _ => false, // Not an inspection task
@@ -370,7 +389,7 @@ impl DebugHooks {
     /// This prevents deadlock when DAP client requests stackTrace/evaluate while paused
     fn wait_for_resume(&self, context: &mut Context) -> JsResult<()> {
         eprintln!("[DebugHooks] Entering wait_for_resume - will process tasks while waiting");
-        
+
         loop {
             // Process any pending inspection tasks before waiting
             // Do this WITHOUT holding debugger lock to avoid contention
@@ -380,7 +399,9 @@ impl DebugHooks {
                         // Handle non-inspection tasks specially
                         match task {
                             EvalTask::Execute { .. } | EvalTask::ExecuteNonBlocking { .. } => {
-                                eprintln!("[DebugHooks] Dropping execution task received while paused");
+                                eprintln!(
+                                    "[DebugHooks] Dropping execution task received while paused"
+                                );
                             }
                             EvalTask::Terminate => {
                                 eprintln!("[DebugHooks] Terminate signal received while paused");
@@ -391,7 +412,9 @@ impl DebugHooks {
                             // Process inspection tasks
                             other => {
                                 if Self::process_inspection_task(other, context) {
-                                    eprintln!("[DebugHooks] Processed inspection task while paused");
+                                    eprintln!(
+                                        "[DebugHooks] Processed inspection task while paused"
+                                    );
                                 }
                             }
                         }
@@ -408,11 +431,11 @@ impl DebugHooks {
                     }
                 }
             }
-            
+
             // NOW lock debugger once to check state and wait
             // This is the ONLY lock acquisition per loop iteration
             let mut debugger_guard = self.debugger.lock().unwrap();
-            
+
             // Check if we should exit
             if !debugger_guard.is_paused() {
                 eprintln!("[DebugHooks] Resumed!");
@@ -424,7 +447,7 @@ impl DebugHooks {
                     .with_message("Debugger shutting down")
                     .into());
             }
-            
+
             // Still paused - wait on condvar (keeps debugger_guard locked)
             // Will be woken by:
             // 1. resume() - to continue execution
@@ -433,7 +456,7 @@ impl DebugHooks {
             eprintln!("[DebugHooks] Waiting on condvar...");
             debugger_guard = self.condvar.wait(debugger_guard).unwrap();
             eprintln!("[DebugHooks] Condvar woken - checking for tasks and state");
-            
+
             // debugger_guard dropped here, releasing lock
             // Loop back to: drain tasks (unlocked) → check state (locked) → wait
         }
